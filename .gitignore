@@ -1,0 +1,44 @@
+# Maven
+target/
+.mvn/
+
+# Logs
+*.log
+logs/
+
+# Runtime
+*.pid
+*.seed
+*.tmp
+*.out
+nohup.out
+NUL
+
+# Environment
+.env
+.env.*
+
+# Database / local data
+*.db
+*.sqlite
+*.sqlite3
+
+# IDE
+.idea/
+*.iml
+.classpath
+.project
+.settings/
+.factorypath
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Python
+__pycache__/
+*.py[cod]
+
+# Local tool state
+.dependency-check-data/
