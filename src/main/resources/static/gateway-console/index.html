@@ -1,0 +1,565 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI Gateway Console</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <div class="app-bg" aria-hidden="true"></div>
+  <div class="shell min-h-dvh">
+    <aside class="sidebar" aria-label="导航">
+      <div class="brand">
+        <h1>AI Gateway Console</h1>
+        <p>网关调试与运营控制台</p>
+      </div>
+      <nav class="nav">
+        <button class="nav-btn active" data-view="chat">网关调试</button>
+        <button class="nav-btn" data-view="models">模型发现</button>
+        <button class="nav-btn" data-view="metrics">模型观测</button>
+        <button class="nav-btn" data-view="ratelimit">限流配额</button>
+        <button class="nav-btn" data-view="routing">路由策略</button>
+        <button class="nav-btn" data-view="cacheab">缓存与灰度</button>
+        <button class="nav-btn" data-view="plugins">插件管理</button>
+        <button class="nav-btn" data-view="safety">安全策略</button>
+        <button class="nav-btn" data-view="audit">操作审计</button>
+        <button class="nav-btn" data-view="billing">账单导出</button>
+      </nav>
+
+      <section class="global-config" aria-label="全局请求配置">
+        <h3>全局请求头</h3>
+        <div class="field">
+          <label for="global-console-token">X-Console-Token</label>
+          <input id="global-console-token" type="password" placeholder="控制台访问令牌" />
+        </div>
+        <div class="field">
+          <label for="global-auth">Authorization</label>
+          <input id="global-auth" type="password" placeholder="Bearer ..." />
+        </div>
+        <div class="field">
+          <label for="global-api-key">x-api-key</label>
+          <input id="global-api-key" type="password" placeholder="sk-..." />
+        </div>
+        <div class="field">
+          <label for="global-userid">userId</label>
+          <input id="global-userid" type="text" placeholder="user-001" />
+        </div>
+        <div class="field">
+          <label for="global-consumer">X-Consumer</label>
+          <input id="global-consumer" type="text" placeholder="console" />
+        </div>
+        <div class="actions">
+          <button id="global-save" class="btn primary" type="button">保存</button>
+          <button id="global-clear" class="btn" type="button">清空</button>
+          <button id="global-logout" class="btn" type="button">退出登录</button>
+        </div>
+        <div id="global-status" class="status">未配置</div>
+        <div id="global-role" class="status">角色：未登录</div>
+      </section>
+      <a class="doc-link" href="/swagger-ui.html" target="_blank" rel="noreferrer">打开 API 文档</a>
+    </aside>
+
+    <main class="content" aria-live="polite">
+      <section class="panel active" id="view-chat">
+        <header class="panel-header">
+          <h2>网关调试</h2>
+          <p>调用 <code>/v1/chat/completions</code>，支持非流式与流式输出。</p>
+        </header>
+
+        <div class="grid two-col">
+          <form id="chat-form" class="card form-card" novalidate>
+            <div class="field">
+              <label for="chat-model">模型</label>
+              <input id="chat-model" name="model" type="text" value="gpt-4o-mini-compatible" required />
+              <small>可填写 alias 或真实模型名</small>
+            </div>
+            <div class="field-inline">
+              <div class="field">
+                <label for="chat-temperature">temperature</label>
+                <input id="chat-temperature" name="temperature" type="number" step="0.1" min="0" max="2" value="0.7" />
+              </div>
+              <div class="field">
+                <label for="chat-max-tokens">max_tokens</label>
+                <input id="chat-max-tokens" name="maxTokens" type="number" min="1" value="256" />
+              </div>
+            </div>
+            <div class="field checkbox-field">
+              <label for="chat-stream">stream</label>
+              <input id="chat-stream" name="stream" type="checkbox" />
+            </div>
+            <div class="field">
+              <label for="chat-messages">messages(JSON)</label>
+              <textarea id="chat-messages" name="messages" rows="10">[
+  { "role": "system", "content": "你是一个可靠的 AI 助手" },
+  { "role": "user", "content": "请用两句话解释 API 网关的价值" }
+]</textarea>
+              <small id="chat-form-error" class="error-text"></small>
+            </div>
+            <div class="actions">
+              <button type="submit" class="btn primary">发送请求</button>
+              <button type="button" id="chat-fill-example" class="btn">填充示例</button>
+              <button type="button" id="chat-clear" class="btn">清空结果</button>
+            </div>
+          </form>
+
+          <div class="card result-card">
+            <div class="result-head">
+              <h3>响应输出</h3>
+              <button id="chat-copy" class="btn" type="button">复制</button>
+            </div>
+            <pre id="chat-output" class="output empty">等待请求...</pre>
+            <div id="chat-status" class="status">就绪</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel" id="view-models">
+        <header class="panel-header">
+          <h2>模型发现</h2>
+          <p>通过 API Base URL 与 API Key 拉取上游模型列表。</p>
+        </header>
+        <form id="models-form" class="card form-card" novalidate>
+          <div class="field">
+            <label for="models-base-url">API Base URL</label>
+            <input id="models-base-url" type="url" placeholder="https://api.openai.com" value="https://api.openai.com" required />
+          </div>
+          <div class="field">
+            <label for="models-api-key">API Key</label>
+            <input id="models-api-key" type="password" placeholder="sk-..." required />
+          </div>
+          <div class="actions">
+            <button class="btn primary" type="submit">获取模型列表</button>
+          </div>
+        </form>
+
+        <div class="card form-card" style="margin-top: 12px;">
+          <div class="result-head">
+            <h3>模型列表</h3>
+            <span id="models-count" class="meta">0 项</span>
+          </div>
+          <div class="field">
+            <label for="models-search">搜索模型</label>
+            <input id="models-search" type="text" placeholder="输入关键词过滤模型" />
+          </div>
+          <div id="models-list" class="list"></div>
+          <div id="models-status" class="status">等待查询</div>
+        </div>
+      </section>
+
+      <section class="panel" id="view-metrics">
+        <header class="panel-header">
+          <h2>模型观测</h2>
+          <p>查询当前小时模型维度指标。</p>
+        </header>
+        <div class="card form-card compact">
+          <div class="field-inline">
+            <div class="field grow">
+              <label for="metrics-model">模型名</label>
+              <input id="metrics-model" type="text" value="gpt-4o-mini" />
+            </div>
+            <div class="field checkbox-field">
+              <label for="metrics-auto">自动刷新(10s)</label>
+              <input id="metrics-auto" type="checkbox" />
+            </div>
+          </div>
+          <div class="actions">
+            <button id="metrics-refresh" class="btn primary" type="button">立即刷新</button>
+          </div>
+        </div>
+        <div class="metrics-grid">
+          <article class="metric-card"><h3>调用量</h3><p id="m-callCount">--</p></article>
+          <article class="metric-card"><h3>成功率</h3><p id="m-successRate">--</p></article>
+          <article class="metric-card"><h3>P95 延迟</h3><p id="m-p95">--</p></article>
+          <article class="metric-card"><h3>成本</h3><p id="m-cost">--</p></article>
+        </div>
+        <div id="metrics-status" class="status">等待查询</div>
+      </section>
+
+      <section class="panel" id="view-ratelimit">
+        <header class="panel-header">
+          <h2>限流配额</h2>
+          <p>运行时管理 token 限流配置，并按当前维度查询 minute/day 配额用量。</p>
+        </header>
+
+        <div class="grid two-col">
+          <form id="ratelimit-form" class="card form-card" novalidate>
+            <div class="field checkbox-field">
+              <label for="ratelimit-enabled">启用限流</label>
+              <input id="ratelimit-enabled" type="checkbox" />
+            </div>
+            <div class="field-inline">
+              <div class="field">
+                <label for="ratelimit-minute-quota">每分钟 Token 配额</label>
+                <input id="ratelimit-minute-quota" type="number" min="1" />
+              </div>
+              <div class="field">
+                <label for="ratelimit-day-quota">每日 Token 配额</label>
+                <input id="ratelimit-day-quota" type="number" min="1" />
+              </div>
+            </div>
+            <div class="field">
+              <label for="ratelimit-min-reserve">最小预留 Token</label>
+              <input id="ratelimit-min-reserve" type="number" min="1" />
+            </div>
+            <div class="field">
+              <label for="ratelimit-dimensions">keyDimensions（逗号分隔）</label>
+              <input id="ratelimit-dimensions" type="text" placeholder="userId,ip,consumer" />
+            </div>
+            <div class="actions">
+              <button id="ratelimit-load" class="btn" type="button">读取配置</button>
+              <button class="btn primary" type="submit">保存配置</button>
+            </div>
+            <div id="ratelimit-status" class="status">等待加载</div>
+          </form>
+
+          <div class="card form-card">
+            <div class="field-inline">
+              <div class="field grow">
+                <label for="ratelimit-provider">Provider</label>
+                <input id="ratelimit-provider" type="text" value="openai" />
+              </div>
+              <div class="field grow">
+                <label for="ratelimit-model">Model</label>
+                <input id="ratelimit-model" type="text" value="gpt-4o-mini" />
+              </div>
+            </div>
+            <div class="field-inline">
+              <div class="field">
+                <label for="ratelimit-userid">userId</label>
+                <input id="ratelimit-userid" type="text" placeholder="anonymous" />
+              </div>
+              <div class="field">
+                <label for="ratelimit-consumer">X-Consumer</label>
+                <input id="ratelimit-consumer" type="text" placeholder="default" />
+              </div>
+            </div>
+            <div class="field-inline">
+              <div class="field">
+                <label for="ratelimit-forwarded">X-Forwarded-For</label>
+                <input id="ratelimit-forwarded" type="text" placeholder="127.0.0.1" />
+              </div>
+              <div class="field">
+                <label for="ratelimit-realip">X-Real-IP</label>
+                <input id="ratelimit-realip" type="text" placeholder="127.0.0.1" />
+              </div>
+            </div>
+            <div class="actions">
+              <button id="ratelimit-usage" class="btn primary" type="button">查询当前用量</button>
+            </div>
+
+            <div class="metrics-grid ratelimit-metrics">
+              <article class="metric-card"><h3>分钟已用</h3><p id="rl-minute-used">--</p></article>
+              <article class="metric-card"><h3>分钟剩余</h3><p id="rl-minute-remaining">--</p></article>
+              <article class="metric-card"><h3>当日已用</h3><p id="rl-day-used">--</p></article>
+              <article class="metric-card"><h3>当日剩余</h3><p id="rl-day-remaining">--</p></article>
+            </div>
+
+            <div class="field" style="margin-top: 12px;">
+              <label for="ratelimit-quota-key">Quota Key</label>
+              <textarea id="ratelimit-quota-key" rows="4" readonly></textarea>
+            </div>
+            <div id="ratelimit-usage-status" class="status">等待查询</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel" id="view-routing">
+        <header class="panel-header">
+          <h2>路由策略</h2>
+          <p>管理默认 provider、多上游优先级与 fallback，并预览实际路由结果。</p>
+        </header>
+
+        <div class="grid two-col">
+          <form id="routing-form" class="card form-card" novalidate>
+            <div class="field">
+              <label for="routing-default-provider">默认 Provider</label>
+              <input id="routing-default-provider" type="text" placeholder="openai" />
+            </div>
+            <div class="field checkbox-field">
+              <label for="routing-fallback-enabled">启用 fallback</label>
+              <input id="routing-fallback-enabled" type="checkbox" />
+            </div>
+            <div class="field">
+              <label for="routing-priority">Provider 优先级（逗号分隔）</label>
+              <input id="routing-priority" type="text" placeholder="openai,claude" />
+            </div>
+            <div class="field">
+              <label for="routing-baseurl">Provider Base URL（JSON）</label>
+              <textarea id="routing-baseurl" rows="5" placeholder='{"openai":"https://api.openai.com","claude":"https://api.anthropic.com"}'></textarea>
+            </div>
+            <div class="field">
+              <label for="routing-alias">Model Alias（JSON）</label>
+              <textarea id="routing-alias" rows="5" placeholder='{"gpt-4o-mini-compatible":"openai:gpt-4o-mini"}'></textarea>
+            </div>
+            <div class="actions">
+              <button id="routing-load" class="btn" type="button">读取配置</button>
+              <button class="btn primary" type="submit">保存配置</button>
+            </div>
+            <div id="routing-status" class="status">等待加载</div>
+          </form>
+
+          <div class="card form-card">
+            <div class="field">
+              <label for="routing-preview-model">预览模型名</label>
+              <input id="routing-preview-model" type="text" value="gpt-4o-mini-compatible" />
+            </div>
+            <div class="field-inline">
+              <div class="field">
+                <label for="routing-preview-provider">X-AI-Provider（可选）</label>
+                <input id="routing-preview-provider" type="text" placeholder="openai" />
+              </div>
+              <div class="field">
+                <label for="routing-preview-consumer">X-Consumer（可选）</label>
+                <input id="routing-preview-consumer" type="text" placeholder="default" />
+              </div>
+            </div>
+            <div class="actions">
+              <button id="routing-preview" class="btn primary" type="button">预览路由</button>
+            </div>
+            <div class="field" style="margin-top: 12px;">
+              <label for="routing-preview-result">路由结果</label>
+              <textarea id="routing-preview-result" rows="12" readonly></textarea>
+            </div>
+            <div id="routing-preview-status" class="status">等待预览</div>
+
+            <div class="field" style="margin-top: 12px;">
+              <label for="routing-sim-samples">A/B 仿真样本数</label>
+              <input id="routing-sim-samples" type="number" min="1" max="2000" value="200" />
+            </div>
+            <div class="actions">
+              <button id="routing-simulate" class="btn" type="button">仿真分桶</button>
+            </div>
+            <div class="field">
+              <label for="routing-sim-result">仿真结果</label>
+              <textarea id="routing-sim-result" rows="8" readonly></textarea>
+            </div>
+            <div id="routing-sim-status" class="status">等待仿真</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel" id="view-cacheab">
+        <header class="panel-header">
+          <h2>缓存与灰度</h2>
+          <p>管理缓存配置与 A/B 灰度参数，查看缓存命中统计。</p>
+        </header>
+
+        <div class="grid two-col">
+          <form id="cache-form" class="card form-card" novalidate>
+            <div class="field checkbox-field">
+              <label for="cache-enabled">启用缓存</label>
+              <input id="cache-enabled" type="checkbox" />
+            </div>
+            <div class="field checkbox-field">
+              <label for="cache-semantic-enabled">启用语义缓存</label>
+              <input id="cache-semantic-enabled" type="checkbox" />
+            </div>
+            <div class="field">
+              <label for="cache-ttl-seconds">TTL（秒）</label>
+              <input id="cache-ttl-seconds" type="number" min="1" value="120" />
+            </div>
+            <div class="actions">
+              <button id="cache-load" class="btn" type="button">读取缓存配置</button>
+              <button class="btn primary" type="submit">保存缓存配置</button>
+            </div>
+            <div id="cache-status" class="status">等待加载</div>
+
+            <div class="metrics-grid ratelimit-metrics">
+              <article class="metric-card"><h3>命中</h3><p id="cache-hit">--</p></article>
+              <article class="metric-card"><h3>未命中</h3><p id="cache-miss">--</p></article>
+              <article class="metric-card"><h3>语义命中</h3><p id="cache-sem-hit">--</p></article>
+              <article class="metric-card"><h3>命中率</h3><p id="cache-hit-rate">--</p></article>
+            </div>
+            <div class="actions" style="margin-top: 12px;">
+              <button id="cache-stats-refresh" class="btn" type="button">刷新统计</button>
+              <button id="cache-stats-reset" class="btn" type="button">重置统计</button>
+            </div>
+            <div class="field" style="margin-top: 12px;">
+              <label for="cache-trend-minutes">趋势窗口（分钟）</label>
+              <input id="cache-trend-minutes" type="number" min="1" max="1440" value="60" />
+            </div>
+            <div class="actions">
+              <button id="cache-trend-refresh" class="btn" type="button">刷新趋势</button>
+            </div>
+            <div class="field">
+              <label for="cache-trend-result">趋势数据</label>
+              <textarea id="cache-trend-result" rows="8" readonly></textarea>
+            </div>
+            <div id="cache-stats-status" class="status">等待查询</div>
+          </form>
+
+          <form id="ab-form" class="card form-card" novalidate>
+            <div class="field checkbox-field">
+              <label for="ab-enabled">启用 A/B 灰度</label>
+              <input id="ab-enabled" type="checkbox" />
+            </div>
+            <div class="field">
+              <label for="ab-provider">B 组 Provider</label>
+              <input id="ab-provider" type="text" placeholder="claude" />
+            </div>
+            <div class="field">
+              <label for="ab-percentage">B 组流量百分比（0-100）</label>
+              <input id="ab-percentage" type="number" min="0" max="100" value="0" />
+            </div>
+            <div class="actions">
+              <button id="ab-load" class="btn" type="button">读取灰度配置</button>
+              <button class="btn primary" type="submit">保存灰度配置</button>
+            </div>
+            <div id="ab-status" class="status">等待加载</div>
+
+            <div class="field" style="margin-top: 12px;">
+              <label for="ab-preview-model">灰度预览模型</label>
+              <input id="ab-preview-model" type="text" value="gpt-4o-mini-compatible" />
+            </div>
+            <div class="field">
+              <label for="ab-preview-userid">userId（用于分桶）</label>
+              <input id="ab-preview-userid" type="text" placeholder="user-1" />
+            </div>
+            <div class="actions">
+              <button id="ab-preview" class="btn primary" type="button">预览灰度命中</button>
+            </div>
+            <div class="field">
+              <label for="ab-preview-result">预览结果</label>
+              <textarea id="ab-preview-result" rows="8" readonly></textarea>
+            </div>
+            <div id="ab-preview-status" class="status">等待预览</div>
+          </form>
+        </div>
+      </section>
+
+      <section class="panel" id="view-plugins">
+        <header class="panel-header">
+          <h2>插件管理</h2>
+          <p>运行时切换插件启停，查看当前配置。</p>
+        </header>
+        <div class="actions">
+          <button id="plugin-reload" class="btn primary" type="button">刷新配置</button>
+        </div>
+        <div id="plugin-list" class="list"></div>
+        <div id="plugins-status" class="status">等待加载</div>
+      </section>
+
+      <section class="panel" id="view-safety">
+        <header class="panel-header">
+          <h2>安全策略</h2>
+          <p>管理输入/输出策略、Prompt Injection、PII 脱敏规则。</p>
+        </header>
+        <form id="safety-form" class="card form-card" novalidate>
+          <div class="field checkbox-field">
+            <label for="safety-enabled">启用安全策略</label>
+            <input id="safety-enabled" type="checkbox" />
+          </div>
+          <div class="field-inline">
+            <div class="field">
+              <label for="safety-input">inputStrategy</label>
+              <input id="safety-input" type="text" placeholder="intercept / audit" />
+            </div>
+            <div class="field">
+              <label for="safety-output">outputStrategy</label>
+              <input id="safety-output" type="text" placeholder="intercept / redact / audit" />
+            </div>
+          </div>
+          <div class="field">
+            <label for="safety-mask">redactMask</label>
+            <input id="safety-mask" type="text" placeholder="***" />
+          </div>
+          <div class="field">
+            <label for="safety-words">blockedWords（每行一个）</label>
+            <textarea id="safety-words" rows="8" placeholder="示例：\n敏感词1\n敏感词2"></textarea>
+          </div>
+          <div class="field">
+            <label for="safety-injection">promptInjectionPatterns（每行一个）</label>
+            <textarea id="safety-injection" rows="6" placeholder="ignore previous instructions"></textarea>
+          </div>
+          <div class="field">
+            <label for="safety-pii">piiPatterns（每行一个正则）</label>
+            <textarea id="safety-pii" rows="6" placeholder="\\b1\\d{10}\\b"></textarea>
+          </div>
+          <div class="field">
+            <label for="safety-sandbox-text">规则沙箱文本</label>
+            <textarea id="safety-sandbox-text" rows="5" placeholder="输入待检测文本，验证规则命中情况"></textarea>
+          </div>
+          <div class="actions">
+            <button id="safety-load" class="btn" type="button">读取配置</button>
+            <button class="btn primary" type="submit">保存配置</button>
+            <button id="safety-sandbox-check" class="btn" type="button">沙箱检测</button>
+          </div>
+          <div class="field">
+            <label for="safety-sandbox-result">沙箱结果</label>
+            <textarea id="safety-sandbox-result" rows="6" readonly></textarea>
+          </div>
+        </form>
+        <div id="safety-status" class="status">等待加载</div>
+      </section>
+
+      <section class="panel" id="view-billing">
+        <header class="panel-header">
+          <h2>账单导出</h2>
+          <p>按日期范围导出 CSV。</p>
+        </header>
+        <form id="billing-form" class="card form-card compact" novalidate>
+          <div class="field-inline">
+            <div class="field grow">
+              <label for="billing-start">开始日期</label>
+              <input id="billing-start" type="date" required />
+            </div>
+            <div class="field grow">
+              <label for="billing-end">结束日期</label>
+              <input id="billing-end" type="date" required />
+            </div>
+          </div>
+          <div class="actions">
+            <button type="submit" class="btn primary">导出 CSV</button>
+          </div>
+        </form>
+        <div id="billing-status" class="status">等待导出</div>
+      </section>
+
+      <section class="panel" id="view-audit">
+        <header class="panel-header">
+          <h2>操作审计</h2>
+          <p>记录控制台关键操作与接口调用结果（支持服务端审计查询）。</p>
+        </header>
+        <div class="actions">
+          <button id="audit-export" class="btn" type="button">导出 JSON</button>
+          <button id="audit-clear" class="btn primary" type="button">清空日志</button>
+          <button id="audit-server-load" class="btn" type="button">加载服务端审计</button>
+          <button id="audit-server-clear" class="btn" type="button">清空服务端审计</button>
+        </div>
+        <div id="audit-list" class="audit-list"></div>
+        <div id="audit-status" class="status">暂无日志</div>
+      </section>
+    </main>
+  </div>
+
+  <div id="access-gate" class="gate-overlay" hidden>
+    <section class="gate-card" aria-label="控制台门禁">
+      <h2>控制台登录</h2>
+      <p>使用用户名与密码登录（后端鉴权）</p>
+      <div class="field">
+        <label for="access-username">用户名</label>
+        <input id="access-username" type="text" placeholder="admin" />
+      </div>
+      <div class="field">
+        <label for="access-password">密码</label>
+        <input id="access-password" type="password" placeholder="admin123456" />
+      </div>
+      <div class="actions">
+        <button id="access-unlock" class="btn primary" type="button">进入控制台</button>
+      </div>
+      <div id="access-status" class="status">未解锁</div>
+    </section>
+  </div>
+
+  <div id="global-error-toast" class="error-toast" hidden>
+    <div class="error-toast-text" id="global-error-text">请求失败</div>
+    <div class="actions">
+      <button id="global-error-retry" class="btn primary" type="button">重试</button>
+      <button id="global-error-close" class="btn" type="button">关闭</button>
+    </div>
+  </div>
+
+  <script src="./main.js"></script>
+</body>
+</html>

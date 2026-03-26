@@ -1,0 +1,16 @@
+spring:
+  cloud:
+    service-registry:
+      auto-registration:
+        enabled: false
+    nacos:
+      discovery:
+        enabled: false
+        register-enabled: false
+
+short-link:
+  ai-gateway:
+    observability:
+      tenant-metrics-enabled: true
+      cache-event-metrics-enabled: true
+      quota-event-metrics-enabled: true

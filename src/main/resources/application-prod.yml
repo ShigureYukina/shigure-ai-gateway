@@ -1,0 +1,40 @@
+spring:
+  cloud:
+    service-registry:
+      auto-registration:
+        enabled: true
+    nacos:
+      discovery:
+        enabled: ${NACOS_DISCOVERY_ENABLED:true}
+        register-enabled: ${NACOS_REGISTER_ENABLED:true}
+        server-addr: ${NACOS_SERVER_ADDR}
+
+knife4j:
+  enable: false
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    health:
+      show-details: never
+
+short-link:
+  ai-gateway:
+    observability:
+      tenant-metrics-enabled: true
+      cache-event-metrics-enabled: true
+      quota-event-metrics-enabled: true
+    security:
+      enabled: true
+      jwt-secret: ${AI_GATEWAY_JWT_SECRET}
+      jwt-issuer: ${AI_GATEWAY_JWT_ISSUER:ai-gateway-console}
+      users:
+        admin:
+          password: ${AI_GATEWAY_ADMIN_PASSWORD}
+          role: admin
+        viewer:
+          password: ${AI_GATEWAY_VIEWER_PASSWORD}
+          role: viewer

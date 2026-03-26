@@ -1,0 +1,177 @@
+server:
+  port: ${SERVER_PORT:8010}
+
+spring:
+  application:
+    name: short-link-ai-gateway
+  data:
+    redis:
+      host: ${REDIS_HOST:127.0.0.1}
+      port: ${REDIS_PORT:6379}
+    r2dbc:
+      repositories:
+        enabled: false
+  r2dbc:
+    url: ${AI_GATEWAY_R2DBC_URL:r2dbc:pool:mysql://127.0.0.1:3306/ai_gateway}
+    username: ${AI_GATEWAY_DB_USERNAME:root}
+    password: ${AI_GATEWAY_DB_PASSWORD:root}
+  cloud:
+    service-registry:
+      auto-registration:
+        enabled: true
+    nacos:
+      discovery:
+        enabled: ${NACOS_DISCOVERY_ENABLED:true}
+        register-enabled: ${NACOS_REGISTER_ENABLED:true}
+        server-addr: ${NACOS_SERVER_ADDR:127.0.0.1:8848}
+
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    operations-sorter: alpha
+    tags-sorter: alpha
+
+knife4j:
+  enable: true
+  setting:
+    language: zh_cn
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    health:
+      show-details: always
+
+resilience4j:
+  circuitbreaker:
+    instances:
+      provider-openai:
+        sliding-window-type: COUNT_BASED
+        sliding-window-size: 20
+        minimum-number-of-calls: 10
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 10s
+        permitted-number-of-calls-in-half-open-state: 5
+      provider-claude:
+        sliding-window-type: COUNT_BASED
+        sliding-window-size: 20
+        minimum-number-of-calls: 10
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 10s
+        permitted-number-of-calls-in-half-open-state: 5
+
+short-link:
+  ai-gateway:
+    upstream:
+      default-provider: openai
+      provider-base-url:
+        openai: https://api.openai.com
+        # claude: https://api.anthropic.com
+      model-alias:
+        gpt-4o-mini-compatible: openai:gpt-4o-mini
+        # claude-3-5-sonnet-compatible: claude:claude-3-5-sonnet-latest
+    timeout-retry:
+      connect-timeout: 5s
+      read-timeout: 60s
+      max-retries: 1
+      retry-status-codes: [429, 500, 502, 503, 504]
+      route-policy:
+        openai:
+          request-timeout: 60s
+          max-retries: 1
+          retry-status-codes: [429, 500, 502, 503, 504]
+    plugin:
+      enabled: true
+      plugin-enabled-map:
+        request-id-inject-plugin: true
+        response-trace-plugin: true
+      global-plugins: [request-id-inject-plugin, response-trace-plugin]
+      route-plugins: {}
+    rate-limit:
+      enabled: false
+      default-token-quota-per-minute: 60000
+      default-token-quota-per-day: 1000000
+      min-token-reserve: 128
+      key-dimensions: [userId, ip, consumer]
+    cache:
+      enabled: false
+      ttl: 2m
+      semantic-cache-enabled: false
+      estimated-cost-per-hit-usd: 0.002
+    safety:
+      enabled: false
+      input-strategy: intercept
+      output-strategy: intercept
+      blocked-words: []
+      prompt-injection-patterns:
+        - ignore previous instructions
+        - system prompt
+        - reveal hidden instructions
+      pii-patterns:
+        - "\\b1\\d{10}\\b"
+        - "\\b[0-9]{17}[0-9Xx]\\b"
+        - "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}"
+      redact-mask: "***"
+    observability:
+      tenant-metrics-enabled: true
+      cache-event-metrics-enabled: true
+      quota-event-metrics-enabled: true
+      model-price:
+        gpt-4o-mini:
+          input-per1k: 0.15
+          output-per1k: 0.6
+        claude-3-5-sonnet-latest:
+          input-per1k: 3
+          output-per1k: 15
+    routing:
+      fallback-enabled: false
+      provider-priority: [openai, claude]
+      ab-enabled: false
+      ab-provider: claude
+      ab-percentage: 0
+    security:
+      enabled: false
+      session-ttl-minutes: 120
+      jwt-secret: ${AI_GATEWAY_JWT_SECRET:replace-with-at-least-32-char-secret-key}
+      jwt-issuer: ${AI_GATEWAY_JWT_ISSUER:ai-gateway-console}
+      users:
+        admin:
+          password: ${AI_GATEWAY_ADMIN_PASSWORD:admin123456}
+          role: admin
+        viewer:
+          password: ${AI_GATEWAY_VIEWER_PASSWORD:viewer123456}
+          role: viewer
+      write-roles: [admin]
+    tenant:
+      enabled: false
+      persistence:
+        enabled: ${AI_GATEWAY_TENANT_DB_ENABLED:false}
+      default-tenant-id: global
+      default-app-id: default-app
+      default-key-id: default-key
+      api-keys:
+        demo-key:
+          api-key: ${AI_GATEWAY_DEMO_API_KEY:demo-platform-key}
+          tenant-id: demo-tenant
+          app-id: demo-app
+          key-id: demo-key
+          enabled: true
+      model-policies:
+        demo-tenant:
+          enabled: true
+          allowed-models: [gpt-4o-mini-compatible, gpt-4o-mini]
+          model-mappings:
+            default: gpt-4o-mini-compatible
+          default-model-alias: default
+          default-model: gpt-4o-mini-compatible
+      quota-policies:
+        demo-tenant:
+          enabled: true
+          token-quota-per-minute: 1000
+          token-quota-per-day: 10000
+          token-quota-per-month: 300000
