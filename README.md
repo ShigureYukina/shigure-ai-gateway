@@ -1,49 +1,90 @@
-# shortlink-ai-gateway
+# Shortlink AI Gateway
 
-一个基于 Spring Boot 3 + WebFlux 的 AI 网关项目，提供 OpenAI 兼容入口，支持多 Provider 路由、流式转发与治理能力。
+<div align="center">
 
-## 1. 项目定位
+![Java](https://img.shields.io/badge/Java-17-3A75B0?logo=openjdk&logoColor=white)
+![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.3.2-6DB33F?logo=springboot&logoColor=white)
+![WebFlux](https://img.shields.io/badge/Spring-WebFlux-00A3E0)
+![Build](https://img.shields.io/badge/Build-Maven-C71A36?logo=apachemaven&logoColor=white)
+![Redis](https://img.shields.io/badge/Redis-Enabled-DC382D?logo=redis&logoColor=white)
 
-- 面向 LLM 接入的统一网关层。
-- 对外暴露 OpenAI 兼容接口：`/v1/chat/completions`。
-- 对内解耦不同上游 Provider（如 OpenAI / Claude 兼容接口）。
+</div>
 
-## 2. 核心能力
+一个面向 LLM 接入场景的统一 AI 网关，基于 **Spring Boot 3 + WebFlux** 构建，对外提供 **OpenAI 兼容接口**，对内支持多 Provider 路由、流式透传、配额治理与韧性保护。
 
-- OpenAI 兼容入口（流式 / 非流式）
-- Provider 路由 + 模型别名映射
-- 超时、重试、失败回退（Fallback）
-- Token 配额治理（Redis）
-- 响应缓存 / 语义缓存开关
-- 输入输出安全拦截
-- 插件链扩展（请求前 / 响应后）
-- 可观测数据记录（延迟、状态、token）
-- Resilience4j 熔断保护（provider 级）
+---
 
-## 3. 技术栈
+## 目录
 
-- Java 17
-- Spring Boot 3.3.2
-- Spring Cloud Gateway + WebFlux
-- Spring Data Redis
-- JUnit 5 + Reactor Test
-- Maven
+- [项目亮点](#项目亮点)
+- [技术栈](#技术栈)
+- [架构概览](#架构概览)
+- [快速开始](#快速开始)
+- [接口示例](#接口示例)
+- [配置说明](#配置说明)
+- [构建与测试](#构建与测试)
+- [可观测性与稳定性](#可观测性与稳定性)
+- [工程化能力](#工程化能力)
+- [Roadmap](#roadmap)
 
-## 4. 快速启动（本地）
+---
 
-### 4.1 前置依赖
+## 项目亮点
+
+| 能力模块 | 说明 |
+| --- | --- |
+| OpenAI 兼容入口 | 暴露 `/v1/chat/completions`，支持流式（SSE）与非流式 |
+| 多 Provider 路由 | Provider 路由、模型别名映射、上游解耦 |
+| 韧性治理 | 超时、重试、Fallback、Resilience4j 熔断 |
+| 配额体系 | 基于 Redis 的 token quota ledger |
+| 缓存策略 | 支持响应缓存 / 语义缓存开关 |
+| 安全拦截 | 输入输出安全策略与统一异常返回 |
+| 插件化扩展 | 请求前 / 响应后插件链机制 |
+| 运行可观测 | 延迟、状态、token 消耗等指标记录 |
+
+---
+
+## 技术栈
+
+- **Language**: Java 17
+- **Framework**: Spring Boot 3.3.2, Spring Cloud Gateway, WebFlux
+- **Data & Cache**: Redis, R2DBC(MySQL，可选)
+- **Test**: JUnit 5, Reactor Test
+- **Build**: Maven
+
+---
+
+## 架构概览
+
+```mermaid
+flowchart LR
+    C[Client / SDK] --> G[/OpenAI Compatible API<br/>/v1/chat/completions/]
+    G --> R[Routing & Alias Mapping]
+    R --> P1[Provider A]
+    R --> P2[Provider B]
+    G --> GOV[Quota / Cache / Security / Plugins]
+    G --> OBS[Metrics / Health / Circuit Breaker]
+```
+
+核心启动类：`src/main/java/com/nageoffer/shortlink/aigateway/AiGatewayApplication.java`
+
+---
+
+## 快速开始
+
+### 1) 前置依赖
 
 - JDK 17
 - Maven（`mvn`）
-- Docker（可选，用于启动 Redis）
+- Docker（可选，推荐用于启动 Redis）
 
-### 4.2 启动 Redis（推荐）
+### 2) 启动 Redis
 
 ```bash
 docker compose up -d redis
 ```
 
-### 4.3 启动应用（local profile）
+### 3) 启动网关（local profile）
 
 ```bash
 mvn spring-boot:run -Dspring-boot.run.profiles=local
@@ -51,19 +92,15 @@ mvn spring-boot:run -Dspring-boot.run.profiles=local
 
 默认端口：`8010`
 
-### 4.4 启用 MySQL / R2DBC（可选）
+### 4) （可选）启用 MySQL / R2DBC 租户配置
 
-当前项目已支持 **R2DBC + MySQL** 的 tenant 配置持久化读取与管理写入，但默认关闭。
-
-#### 1）先初始化数据库
-
-手动执行脚本：
+先执行初始化脚本：
 
 ```bash
 src/main/resources/sql/init_multi_tenant_platform_mysql.sql
 ```
 
-#### 2）设置数据库环境变量
+再配置环境变量：
 
 ```bash
 AI_GATEWAY_R2DBC_URL=r2dbc:pool:mysql://127.0.0.1:3306/ai_gateway
@@ -72,15 +109,11 @@ AI_GATEWAY_DB_PASSWORD=root
 AI_GATEWAY_TENANT_DB_ENABLED=true
 ```
 
-#### 3）启动后行为
+启用后：tenant API Key / model policy / quota policy / model price 优先从 DB 读取，未命中时回退到 `application.yml`。
 
-- tenant API Key / model policy / quota policy / model price 优先从 DB 读取
-- 若 DB 不可用或未命中，则回退到 `application.yml`
-- Redis 仍负责 quota ledger、exact cache 与运行时指标
+### 5) 生产部署建议（prod profile）
 
-### 4.5 生产配置（prod profile）
-
-生产环境请使用 `prod` profile，并通过环境变量注入密钥与账号口令：
+生产环境建议使用 `prod` profile，并通过环境变量注入敏感配置：
 
 ```bash
 AI_GATEWAY_JWT_SECRET=***
@@ -89,49 +122,13 @@ AI_GATEWAY_VIEWER_PASSWORD=***
 NACOS_SERVER_ADDR=***
 ```
 
-配置文件：`src/main/resources/application-prod.yml`
+生产配置文件：`src/main/resources/application-prod.yml`
 
-## 5. 常用构建与测试命令
+---
 
-```bash
-# 编译（不跑测试）
-mvn -DskipTests compile
+## 接口示例
 
-# 运行全部测试
-mvn test
-
-# 完整校验
-mvn clean verify
-
-# 打包
-mvn clean package -DskipTests
-```
-
-### 单测（重点）
-
-```bash
-# 单个测试类
-mvn -Dtest=ProviderRoutingServiceTest test
-
-# 单个测试方法
-mvn -Dtest=ProviderRoutingServiceTest#shouldResolveAliasProviderAndModel test
-
-# 多个测试类
-mvn -Dtest=ProviderRoutingServiceTest,SseStreamE2ETest test
-```
-
-### 覆盖率（JaCoCo）
-
-```bash
-# 运行测试并生成覆盖率报告
-mvn clean verify
-```
-
-报告路径：`target/site/jacoco/index.html`
-
-## 6. 接口示例
-
-### 非流式
+### 非流式请求
 
 ```bash
 curl -X POST "http://127.0.0.1:8010/v1/chat/completions" \
@@ -144,7 +141,7 @@ curl -X POST "http://127.0.0.1:8010/v1/chat/completions" \
   }'
 ```
 
-### 流式（SSE）
+### 流式请求（SSE）
 
 ```bash
 curl -N -X POST "http://127.0.0.1:8010/v1/chat/completions" \
@@ -157,25 +154,13 @@ curl -N -X POST "http://127.0.0.1:8010/v1/chat/completions" \
   }'
 ```
 
-## 7. 本地“近真实”E2E 模拟
+---
 
-项目内置本地 mock 上游脚本，可在无真实外部 API 的情况下验证主流程。
+## 配置说明
 
-```bash
-mvn -DskipTests package
-powershell -ExecutionPolicy Bypass -File "scripts/simulate_e2e.ps1"
-```
+主配置文件：`src/main/resources/application.yml`
 
-会自动：
-- 启动本地 mock provider（`127.0.0.1:18080`）
-- 启动网关（`127.0.0.1:18010`）
-- 分别验证非流式与流式链路
-
-## 8. 配置说明
-
-主配置：`src/main/resources/application.yml`
-
-建议通过环境变量覆盖敏感配置，例如：
+推荐通过环境变量覆盖敏感参数：
 
 - `AI_GATEWAY_JWT_SECRET`
 - `AI_GATEWAY_ADMIN_PASSWORD`
@@ -187,23 +172,82 @@ powershell -ExecutionPolicy Bypass -File "scripts/simulate_e2e.ps1"
 - `AI_GATEWAY_DB_PASSWORD`
 - `AI_GATEWAY_TENANT_DB_ENABLED`
 
-## 9. 工程化
+---
 
-- CI：`.github/workflows/ci.yml`（`clean verify` + 覆盖率门禁 + 打包并上传制品）
-- 依赖安全扫描：OWASP Dependency-Check（支持 `NVD_API_KEY`）
-- 代理/协作规范：`AGENTS.md`
+## 构建与测试
 
-## 10. 监控与熔断
+### 常用命令
 
-- Prometheus 指标地址：`/actuator/prometheus`
+```bash
+# 编译（不跑测试）
+mvn -DskipTests compile
+
+# 运行全部测试
+mvn test
+
+# 完整校验（含覆盖率）
+mvn clean verify
+
+# 打包
+mvn clean package -DskipTests
+```
+
+### 运行指定测试
+
+```bash
+# 单个测试类
+mvn -Dtest=ProviderRoutingServiceTest test
+
+# 单个测试方法
+mvn -Dtest=ProviderRoutingServiceTest#shouldResolveAliasProviderAndModel test
+
+# 多个测试类
+mvn -Dtest=ProviderRoutingServiceTest,SseStreamE2ETest test
+```
+
+JaCoCo 报告：`target/site/jacoco/index.html`
+
+---
+
+## 可观测性与稳定性
+
+- Prometheus 指标：`/actuator/prometheus`
 - 健康检查：`/actuator/health`
-- Resilience4j 熔断实例：`provider-openai`、`provider-claude`
+- 熔断实例：`provider-openai`、`provider-claude`
 
-> 生产环境建议在 CI 设置 `NVD_API_KEY`（GitHub Secrets）以减少 dependency-check 更新时间。
+> 建议在 CI 中配置 `NVD_API_KEY`（GitHub Secrets）以减少 dependency-check 数据更新时间。
 
-## 11. 后续优化建议
+---
 
-- 增加 Testcontainers 集成测试（Redis）
-- 补充 Prometheus + Grafana 观测面板
-- 增加真实上游 smoke test（受控 key / 限额）
-- 输出性能基线（P95、错误率、吞吐）
+## 本地“近真实”E2E 模拟
+
+无需真实外部 API，可使用内置脚本验证主流程：
+
+```bash
+mvn -DskipTests package
+powershell -ExecutionPolicy Bypass -File "scripts/simulate_e2e.ps1"
+```
+
+该脚本会自动：
+
+- 启动本地 mock provider（`127.0.0.1:18080`）
+- 启动网关（`127.0.0.1:18010`）
+- 验证流式与非流式链路
+
+---
+
+## 工程化能力
+
+- CI：`.github/workflows/ci.yml`（`clean verify` + 覆盖率门禁 + 打包上传）
+- 安全扫描：OWASP Dependency-Check（支持 `NVD_API_KEY`）
+- 协作规范：`AGENTS.md`
+- API 清单：`docs/api-inventory.md`
+
+---
+
+## Roadmap
+
+- [ ] 增加 Testcontainers 集成测试（Redis）
+- [ ] 补充 Prometheus + Grafana 可视化面板
+- [ ] 增加真实上游 smoke test（受控 key / 限额）
+- [ ] 输出性能基线（P95、错误率、吞吐）
