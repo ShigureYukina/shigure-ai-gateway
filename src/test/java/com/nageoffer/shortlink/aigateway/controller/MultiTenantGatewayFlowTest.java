@@ -4,6 +4,7 @@ import com.nageoffer.shortlink.aigateway.adapter.ProviderAdapter;
 import com.nageoffer.shortlink.aigateway.config.AiGatewayProperties;
 import com.nageoffer.shortlink.aigateway.dto.req.AiChatCompletionMessage;
 import com.nageoffer.shortlink.aigateway.dto.req.AiChatCompletionReqDTO;
+import com.nageoffer.shortlink.aigateway.config.AiGatewayTracer;
 import com.nageoffer.shortlink.aigateway.governance.AiCacheControlService;
 import com.nageoffer.shortlink.aigateway.governance.AiCacheKeyService;
 import com.nageoffer.shortlink.aigateway.governance.AiCacheStatsService;
@@ -199,7 +200,8 @@ class MultiTenantGatewayFlowTest {
                 Mockito.mock(NoopSemanticCacheService.class),
                 Mockito.mock(PluginChainService.class),
                 properties,
-                Mockito.mock(ReactiveCircuitBreakerFactory.class)
+                Mockito.mock(ReactiveCircuitBreakerFactory.class),
+                Mockito.mock(AiGatewayTracer.class)
         );
     }
 

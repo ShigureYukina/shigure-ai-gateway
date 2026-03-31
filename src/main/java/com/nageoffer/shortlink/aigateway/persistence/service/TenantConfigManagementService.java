@@ -19,6 +19,7 @@ import com.nageoffer.shortlink.aigateway.persistence.repository.TenantModelAllow
 import com.nageoffer.shortlink.aigateway.persistence.repository.TenantModelMappingRepository;
 import com.nageoffer.shortlink.aigateway.persistence.repository.TenantModelPolicyRepository;
 import com.nageoffer.shortlink.aigateway.persistence.repository.TenantQuotaPolicyRepository;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 import reactor.core.publisher.Flux;
@@ -31,6 +32,7 @@ import java.util.Map;
 import java.util.Optional;
 
 @Service
+@ConditionalOnProperty(prefix = "short-link.ai-gateway.tenant.persistence", name = "enabled", havingValue = "true")
 public class TenantConfigManagementService {
 
     private final AiGatewayProperties properties;
