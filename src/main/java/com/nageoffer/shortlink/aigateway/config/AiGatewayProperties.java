@@ -125,6 +125,11 @@ public class AiGatewayProperties {
         private boolean semanticCacheEnabled = false;
 
         /**
+         * 语义缓存相似度阈值，使用 trigram Jaccard 计算。
+         */
+        private Double semanticSimilarityThreshold = 0.85D;
+
+        /**
          * 每次缓存命中的节省成本估算（USD）
          */
         private Double estimatedCostPerHitUsd = 0.002D;
@@ -185,6 +190,16 @@ public class AiGatewayProperties {
          */
         private boolean quotaEventMetricsEnabled = true;
 
+        /**
+         * 是否启用分布式追踪。
+         */
+        private boolean tracingEnabled = true;
+
+        /**
+         * 追踪采样率 0.0-1.0。
+         */
+        private Double tracingSamplingRate = 1.0D;
+
         private Map<String, ModelPrice> modelPrice = new HashMap<>();
     }
 
@@ -215,6 +230,23 @@ public class AiGatewayProperties {
          * B 组流量百分比（0-100）
          */
         private Integer abPercentage = 0;
+
+        /**
+         * 是否启用动态路由。
+         */
+        private boolean dynamicRoutingEnabled = false;
+
+        /**
+         * 路由策略：static / dynamic / cost-optimized / latency-optimized
+         */
+        private RoutingStrategy routingStrategy = RoutingStrategy.STATIC;
+    }
+
+    public enum RoutingStrategy {
+        STATIC,
+        DYNAMIC,
+        COST_OPTIMIZED,
+        LATENCY_OPTIMIZED
     }
 
     @Data

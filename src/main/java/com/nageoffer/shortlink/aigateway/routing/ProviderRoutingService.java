@@ -29,17 +29,20 @@ public class ProviderRoutingService {
 
     private final AiGatewayProperties properties;
 
+    private final ProviderHealthScoreService providerHealthScoreService;
+
     /**
      * 解析本次请求的完整路由结果。
      */
     public AiRoutingResult resolve(String clientModel, HttpHeaders headers) {
-        String selectedProvider = resolveProvider(headers, clientModel);
+        ProviderSelection providerSelection = resolveProvider(headers, clientModel);
+        String selectedProvider = providerSelection.provider();
         ResolvedModel primaryResolvedModel = resolveModel(selectedProvider, clientModel);
         String provider = primaryResolvedModel.provider();
         String providerModel = primaryResolvedModel.providerModel();
         String upstreamUri = buildChatUri(provider);
         boolean abHit = isAbHit(headers, clientModel);
-        String routeSource = abHit ? "ab" : (StringUtils.hasText(headers.getFirst("X-AI-Provider")) ? "header" : "default");
+        String routeSource = providerSelection.routeSource();
 
         List<AiRoutingResult.FallbackRouteTarget> fallbackCandidates = resolveFallbackCandidates(provider, providerModel);
         return AiRoutingResult.builder()
@@ -62,7 +65,9 @@ public class ProviderRoutingService {
                 "providerPriority", properties.getRouting().getProviderPriority(),
                 "abEnabled", properties.getRouting().isAbEnabled(),
                 "abProvider", properties.getRouting().getAbProvider(),
-                "abPercentage", properties.getRouting().getAbPercentage()
+                "abPercentage", properties.getRouting().getAbPercentage(),
+                "dynamicRoutingEnabled", properties.getRouting().isDynamicRoutingEnabled(),
+                "routingStrategy", properties.getRouting().getRoutingStrategy()
         );
     }
 
@@ -113,6 +118,21 @@ public class ProviderRoutingService {
             }
         }
 
+        Object dynamicRoutingEnabled = requestParam.get("dynamicRoutingEnabled");
+        if (dynamicRoutingEnabled instanceof Boolean dynamicRoutingEnabledValue) {
+            properties.getRouting().setDynamicRoutingEnabled(dynamicRoutingEnabledValue);
+        }
+
+        Object routingStrategy = requestParam.get("routingStrategy");
+        if (routingStrategy instanceof String routingStrategyValue && StringUtils.hasText(routingStrategyValue)) {
+            try {
+                properties.getRouting().setRoutingStrategy(AiGatewayProperties.RoutingStrategy.valueOf(
+                        routingStrategyValue.trim().replace('-', '_').toUpperCase()
+                ));
+            } catch (IllegalArgumentException ignored) {
+            }
+        }
+
         Object providerBaseUrl = requestParam.get("providerBaseUrl");
         if (providerBaseUrl instanceof Map<?, ?> mapValue) {
             Map<String, String> normalizedMap = new java.util.LinkedHashMap<>();
@@ -147,17 +167,23 @@ public class ProviderRoutingService {
     public Map<String, Object> preview(String model, HttpHeaders headers) {
         AiRoutingResult routing = resolve(model, headers);
         int bucket = resolveBucket(headers, model);
-        return Map.of(
-                "provider", routing.getProvider(),
-                "providerModel", routing.getProviderModel(),
-                "upstreamUri", routing.getUpstreamUri(),
-                "routeSource", routing.getRouteSource(),
-                "abHit", routing.getAbHit(),
-                "abBucket", bucket,
-                "abThreshold", properties.getRouting().getAbPercentage(),
-                "routePolicy", routing.getRoutePolicy(),
-                "fallbackCandidates", routing.getFallbackCandidates() == null ? List.of() : routing.getFallbackCandidates()
+        return Map.ofEntries(
+                Map.entry("provider", routing.getProvider()),
+                Map.entry("providerModel", routing.getProviderModel()),
+                Map.entry("upstreamUri", routing.getUpstreamUri()),
+                Map.entry("routeSource", routing.getRouteSource()),
+                Map.entry("abHit", routing.getAbHit()),
+                Map.entry("abBucket", bucket),
+                Map.entry("abThreshold", properties.getRouting().getAbPercentage()),
+                Map.entry("dynamicRoutingEnabled", properties.getRouting().isDynamicRoutingEnabled()),
+                Map.entry("routingStrategy", properties.getRouting().getRoutingStrategy()),
+                Map.entry("routePolicy", routing.getRoutePolicy()),
+                Map.entry("fallbackCandidates", routing.getFallbackCandidates() == null ? List.of() : routing.getFallbackCandidates())
         );
+    }
+
+    public List<ProviderHealthScore> providerHealthScores(String model) {
+        return providerHealthScoreService.getProviderScores(model);
     }
 
     public Map<String, Object> simulateAb(String model, int samples) {
@@ -201,15 +227,31 @@ public class ProviderRoutingService {
     /**
      * 优先读取请求头 X-AI-Provider，未指定时使用默认 provider。
      */
-    private String resolveProvider(HttpHeaders headers, String clientModel) {
+    private ProviderSelection resolveProvider(HttpHeaders headers, String clientModel) {
         if (isAbHit(headers, clientModel)) {
             String abProvider = properties.getRouting().getAbProvider();
             if (StringUtils.hasText(abProvider) && StringUtils.hasText(properties.getUpstream().getProviderBaseUrl().get(abProvider))) {
-                return abProvider;
+                return new ProviderSelection(abProvider, "ab");
             }
         }
-        String provider = headers.getFirst("X-AI-Provider");
-        return StringUtils.hasText(provider) ? provider : properties.getUpstream().getDefaultProvider();
+        String headerProvider = headers.getFirst("X-AI-Provider");
+        if (StringUtils.hasText(headerProvider)) {
+            return new ProviderSelection(headerProvider, "header");
+        }
+        if (properties.getRouting().isDynamicRoutingEnabled()) {
+            String dynamicProvider = providerHealthScoreService.getBestProvider(clientModel);
+            if (StringUtils.hasText(dynamicProvider)) {
+                String routeSource = switch (properties.getRouting().getRoutingStrategy()) {
+                    case COST_OPTIMIZED -> "dynamic-cost";
+                    case LATENCY_OPTIMIZED -> "dynamic-latency";
+                    case DYNAMIC, STATIC -> "dynamic";
+                };
+                if (StringUtils.hasText(properties.getUpstream().getProviderBaseUrl().get(dynamicProvider))) {
+                    return new ProviderSelection(dynamicProvider, routeSource);
+                }
+            }
+        }
+        return new ProviderSelection(properties.getUpstream().getDefaultProvider(), "default");
     }
 
     private boolean isAbHit(HttpHeaders headers, String clientModel) {
@@ -314,5 +356,8 @@ public class ProviderRoutingService {
     }
 
     private record ResolvedModel(String provider, String providerModel) {
+    }
+
+    private record ProviderSelection(String provider, String routeSource) {
     }
 }

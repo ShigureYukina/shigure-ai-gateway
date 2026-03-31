@@ -34,13 +34,15 @@
 | 能力模块 | 说明 |
 | --- | --- |
 | OpenAI 兼容入口 | 暴露 `/v1/chat/completions`，支持流式（SSE）与非流式 |
-| 多 Provider 路由 | Provider 路由、模型别名映射、上游解耦 |
+| 多 Provider 路由 | 静态路由 / 动态路由（成本优化 / 延迟优化）/ A/B 灰度 / 模型别名映射 |
+| 智能路由 | 基于健康评分的动态路由：成功率 40% + 延迟 30% + 成本 30% |
 | 韧性治理 | 超时、重试、Fallback、Resilience4j 熔断 |
 | 配额体系 | 基于 Redis 的 token quota ledger |
-| 缓存策略 | 支持响应缓存 / 语义缓存开关 |
-| 安全拦截 | 输入输出安全策略与统一异常返回 |
+| 语义缓存 | Trigram Jaccard 相似度匹配 + 精确 Hash 命中，可配置阈值 |
+| 安全拦截 | 输入输出安全策略、Prompt Injection 检测、PII 脱敏 |
 | 插件化扩展 | 请求前 / 响应后插件链机制 |
-| 运行可观测 | 延迟、状态、token 消耗等指标记录 |
+| 分布式追踪 | Micrometer Tracing + OpenTelemetry，全链路 Span 标记 |
+| 运行可观测 | Prometheus 指标、P95 延迟、Provider 健康评分 |
 
 ---
 
@@ -49,6 +51,7 @@
 - **Language**: Java 17
 - **Framework**: Spring Boot 3.3.2, Spring Cloud Gateway, WebFlux
 - **Data & Cache**: Redis, R2DBC(MySQL，可选)
+- **Observability**: Micrometer, Prometheus, OpenTelemetry Tracing
 - **Test**: JUnit 5, Reactor Test
 - **Build**: Maven
 
@@ -211,9 +214,16 @@ JaCoCo 报告：`target/site/jacoco/index.html`
 
 ## 可观测性与稳定性
 
-- Prometheus 指标：`/actuator/prometheus`
-- 健康检查：`/actuator/health`
-- 熔断实例：`provider-openai`、`provider-claude`
+- **Prometheus 指标**：`/actuator/prometheus`
+- **健康检查**：`/actuator/health`
+- **熔断实例**：`provider-openai`、`provider-claude`
+- **分布式追踪**：Micrometer Tracing + OpenTelemetry OTLP exporter
+  - 环境变量：`OTEL_EXPORTER_OTLP_ENDPOINT`（默认 `http://localhost:4318`）
+  - 采样率：`OTEL_SAMPLING_RATE`（默认 `1.0`）
+- **Provider 健康评分**：`GET /v1/routing/health?model=xxx`
+  - 评分公式：`成功率×40 + (1-归一化延迟)×30 + (1-归一化成本)×30`
+  - 支持策略：`static` / `dynamic` / `cost-optimized` / `latency-optimized`
+- **语义缓存**：Trigram Jaccard 相似度匹配，阈值可配置（默认 0.85）
 
 > 建议在 CI 中配置 `NVD_API_KEY`（GitHub Secrets）以减少 dependency-check 数据更新时间。
 
@@ -251,3 +261,4 @@ powershell -ExecutionPolicy Bypass -File "scripts/simulate_e2e.ps1"
 - [ ] 补充 Prometheus + Grafana 可视化面板
 - [ ] 增加真实上游 smoke test（受控 key / 限额）
 - [ ] 输出性能基线（P95、错误率、吞吐）
+- [ ] 竞品对比文档（vs LiteLLM / OpenAI Proxy）

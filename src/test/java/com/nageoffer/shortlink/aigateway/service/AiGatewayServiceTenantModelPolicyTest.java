@@ -4,6 +4,7 @@ import com.nageoffer.shortlink.aigateway.adapter.ProviderAdapter;
 import com.nageoffer.shortlink.aigateway.config.AiGatewayProperties;
 import com.nageoffer.shortlink.aigateway.dto.req.AiChatCompletionMessage;
 import com.nageoffer.shortlink.aigateway.dto.req.AiChatCompletionReqDTO;
+import com.nageoffer.shortlink.aigateway.config.AiGatewayTracer;
 import com.nageoffer.shortlink.aigateway.exception.AiGatewayClientException;
 import com.nageoffer.shortlink.aigateway.exception.AiGatewayErrorCode;
 import com.nageoffer.shortlink.aigateway.governance.AiCacheControlService;
@@ -53,7 +54,8 @@ class AiGatewayServiceTenantModelPolicyTest {
                 Mockito.mock(NoopSemanticCacheService.class),
                 Mockito.mock(PluginChainService.class),
                 new AiGatewayProperties(),
-                Mockito.mock(ReactiveCircuitBreakerFactory.class)
+                Mockito.mock(ReactiveCircuitBreakerFactory.class),
+                Mockito.mock(AiGatewayTracer.class)
         );
 
         AiGatewayClientException exception = Assertions.assertThrows(AiGatewayClientException.class,

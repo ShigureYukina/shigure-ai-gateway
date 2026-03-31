@@ -2,6 +2,7 @@ package com.nageoffer.shortlink.aigateway.service;
 
 import com.nageoffer.shortlink.aigateway.adapter.ProviderAdapter;
 import com.nageoffer.shortlink.aigateway.config.AiGatewayProperties;
+import com.nageoffer.shortlink.aigateway.config.AiGatewayTracer;
 import com.nageoffer.shortlink.aigateway.dto.model.AiCanonicalChatRequest;
 import com.nageoffer.shortlink.aigateway.dto.req.AiChatCompletionReqDTO;
 import com.nageoffer.shortlink.aigateway.exception.AiGatewayClientException;
@@ -27,6 +28,7 @@ import com.nageoffer.shortlink.aigateway.routing.AiRoutingResult;
 import com.nageoffer.shortlink.aigateway.routing.ProviderRoutingService;
 import com.nageoffer.shortlink.aigateway.tenant.TenantContext;
 import com.nageoffer.shortlink.aigateway.tenant.TenantModelPolicyService;
+import io.micrometer.tracing.Span;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.http.MediaType;
@@ -88,6 +90,8 @@ public class AiGatewayService {
 
     private final ReactiveCircuitBreakerFactory<?, ?> circuitBreakerFactory;
 
+    private final AiGatewayTracer aiGatewayTracer;
+
     public AiGatewayService(WebClient aiGatewayWebClient,
                             ProviderRoutingService providerRoutingService,
                             TenantModelPolicyService tenantModelPolicyService,
@@ -103,7 +107,8 @@ public class AiGatewayService {
                             NoopSemanticCacheService semanticCacheService,
                             PluginChainService pluginChainService,
                             AiGatewayProperties properties,
-                            ReactiveCircuitBreakerFactory<?, ?> circuitBreakerFactory) {
+                            ReactiveCircuitBreakerFactory<?, ?> circuitBreakerFactory,
+                            AiGatewayTracer aiGatewayTracer) {
         this.aiGatewayWebClient = aiGatewayWebClient;
         this.providerRoutingService = providerRoutingService;
         this.tenantModelPolicyService = tenantModelPolicyService;
@@ -120,6 +125,7 @@ public class AiGatewayService {
         this.pluginChainService = pluginChainService;
         this.properties = properties;
         this.circuitBreakerFactory = circuitBreakerFactory;
+        this.aiGatewayTracer = aiGatewayTracer;
     }
 
     /**
@@ -128,16 +134,23 @@ public class AiGatewayService {
      * 主要阶段：路由 -> 缓存 -> 配额 -> 适配转换 -> 上游调用 -> 输出治理 -> 指标记录。
      */
     public Mono<String> chatCompletion(AiChatCompletionReqDTO request, HttpHeaders headers, TenantContext tenantContext) {
+        Span span = aiGatewayTracer.startSpan("ai-gateway.chat-completion");
         String effectiveModel = tenantModelPolicyService.resolveModel(tenantContext, request.getModel());
         request.setModel(effectiveModel);
         AiRoutingResult routing = providerRoutingService.resolve(effectiveModel, headers);
         String requestId = resolveRequestId(headers);
+        aiGatewayTracer.tag(span, "request.id", requestId);
+        aiGatewayTracer.tag(span, "provider", routing.getProvider());
+        aiGatewayTracer.tag(span, "model", routing.getProviderModel());
+        aiGatewayTracer.tag(span, "tenant.id", tenantContext.tenantId());
+        aiGatewayTracer.tag(span, "route.source", routing.getRouteSource());
         HttpHeaders forwardHeaders = buildForwardHeaders(headers, requestId);
         boolean cacheEnabled = aiCacheControlService.enabledForRequest(headers, false);
         String cacheKey = cacheEnabled ? aiCacheKeyService.build(tenantContext, routing.getProvider(), routing.getProviderModel(), request) : null;
         if (cacheEnabled) {
             java.util.Optional<String> cached = redisResponseCacheService.get(cacheKey);
             if (cached.isPresent()) {
+                aiGatewayTracer.tag(span, "cache.hit", "true");
                 aiCacheStatsService.recordHit();
                 metricsRecorder.recordTenantCacheEvent(tenantContext.tenantId(), "hit");
                 metricsRecorder.recordCall(AiCallRecord.builder()
@@ -153,11 +166,14 @@ public class AiGatewayService {
                         .status(200)
                         .cacheHit(true)
                         .build());
+                aiGatewayTracer.end(span);
                 return Mono.just(cached.get());
             }
             java.util.Optional<String> semanticCached = semanticCacheService.find(routing.getProvider(), routing.getProviderModel(), request);
             if (semanticCached.isPresent()) {
+                aiGatewayTracer.tag(span, "cache.hit", "semantic");
                 aiCacheStatsService.recordSemanticHit();
+                aiGatewayTracer.end(span);
                 return Mono.just(semanticCached.get());
             }
             aiCacheStatsService.recordMiss();
@@ -180,6 +196,8 @@ public class AiGatewayService {
                         aiCacheStatsService.recordWrite();
                         metricsRecorder.recordTenantCacheEvent(tenantContext.tenantId(), "write");
                     }
+                    aiGatewayTracer.tag(span, "actual.provider", attemptResult.provider());
+                    aiGatewayTracer.tag(span, "actual.model", attemptResult.providerModel());
                     metricsRecorder.recordCall(AiCallRecord.builder()
                             .requestId(requestId)
                             .provider(attemptResult.provider())
@@ -193,20 +211,25 @@ public class AiGatewayService {
                             .status(200)
                             .cacheHit(false)
                             .build());
+                    aiGatewayTracer.end(span);
                 })
-                .doOnError(ex -> metricsRecorder.recordCall(AiCallRecord.builder()
-                        .requestId(requestId)
-                        .provider(routing.getProvider())
-                        .model(routing.getProviderModel())
-                        .tenantId(tenantContext.tenantId())
-                        .appId(tenantContext.appId())
-                        .keyId(tenantContext.keyId())
-                        .tokenIn(0L)
-                        .tokenOut(0L)
-                        .latencyMillis(Duration.between(start, Instant.now()).toMillis())
-                        .status(resolveStatus(ex))
-                        .cacheHit(false)
-                        .build()))
+                .doOnError(ex -> {
+                    aiGatewayTracer.tag(span, "error", ex.getMessage());
+                    aiGatewayTracer.endWithError(span, ex);
+                    metricsRecorder.recordCall(AiCallRecord.builder()
+                            .requestId(requestId)
+                            .provider(routing.getProvider())
+                            .model(routing.getProviderModel())
+                            .tenantId(tenantContext.tenantId())
+                            .appId(tenantContext.appId())
+                            .keyId(tenantContext.keyId())
+                            .tokenIn(0L)
+                            .tokenOut(0L)
+                            .latencyMillis(Duration.between(start, Instant.now()).toMillis())
+                            .status(resolveStatus(ex))
+                            .cacheHit(false)
+                            .build());
+                })
                 .map(AttemptResult::body);
     }
 
@@ -216,42 +239,57 @@ public class AiGatewayService {
      * 与非流式链路保持一致的路由与治理逻辑，但响应以事件流逐段透传。
      */
     public Flux<String> streamChatCompletion(AiChatCompletionReqDTO request, HttpHeaders headers, TenantContext tenantContext) {
+        Span span = aiGatewayTracer.startSpan("ai-gateway.stream-chat-completion");
         String effectiveModel = tenantModelPolicyService.resolveModel(tenantContext, request.getModel());
         request.setModel(effectiveModel);
         AiRoutingResult routing = providerRoutingService.resolve(effectiveModel, headers);
         String requestId = resolveRequestId(headers);
+        aiGatewayTracer.tag(span, "request.id", requestId);
+        aiGatewayTracer.tag(span, "provider", routing.getProvider());
+        aiGatewayTracer.tag(span, "model", routing.getProviderModel());
+        aiGatewayTracer.tag(span, "tenant.id", tenantContext.tenantId());
+        aiGatewayTracer.tag(span, "stream", "true");
         HttpHeaders forwardHeaders = buildForwardHeaders(headers, requestId);
         redisTokenQuotaService.preCheck(tenantContext, headers, routing.getProvider(), routing.getProviderModel(), request);
         List<RouteTarget> routeTargets = buildRouteTargets(routing);
         RouteTarget primaryRoute = routeTargets.get(0);
         Instant start = Instant.now();
         return callStreamWithFallback(0, routeTargets, request, forwardHeaders, requestId, start)
-                .doOnComplete(() -> metricsRecorder.recordCall(AiCallRecord.builder()
-                        .requestId(requestId)
-                        .provider(primaryRoute.provider())
-                        .model(primaryRoute.providerModel())
-                        .tenantId(tenantContext.tenantId())
-                        .appId(tenantContext.appId())
-                        .keyId(tenantContext.keyId())
-                        .tokenIn(0L)
-                        .tokenOut(0L)
-                        .latencyMillis(Duration.between(start, Instant.now()).toMillis())
-                        .status(200)
-                        .cacheHit(false)
-                        .build()))
-                .doOnError(ex -> metricsRecorder.recordCall(AiCallRecord.builder()
-                        .requestId(requestId)
-                        .provider(routing.getProvider())
-                        .model(routing.getProviderModel())
-                        .tenantId(tenantContext.tenantId())
-                        .appId(tenantContext.appId())
-                        .keyId(tenantContext.keyId())
-                        .tokenIn(0L)
-                        .tokenOut(0L)
-                        .latencyMillis(Duration.between(start, Instant.now()).toMillis())
-                        .status(resolveStatus(ex))
-                        .cacheHit(false)
-                        .build()));
+                .doOnComplete(() -> {
+                    aiGatewayTracer.tag(span, "actual.provider", primaryRoute.provider());
+                    aiGatewayTracer.tag(span, "actual.model", primaryRoute.providerModel());
+                    aiGatewayTracer.end(span);
+                    metricsRecorder.recordCall(AiCallRecord.builder()
+                            .requestId(requestId)
+                            .provider(primaryRoute.provider())
+                            .model(primaryRoute.providerModel())
+                            .tenantId(tenantContext.tenantId())
+                            .appId(tenantContext.appId())
+                            .keyId(tenantContext.keyId())
+                            .tokenIn(0L)
+                            .tokenOut(0L)
+                            .latencyMillis(Duration.between(start, Instant.now()).toMillis())
+                            .status(200)
+                            .cacheHit(false)
+                            .build());
+                })
+                .doOnError(ex -> {
+                    aiGatewayTracer.tag(span, "error", ex.getMessage());
+                    aiGatewayTracer.endWithError(span, ex);
+                    metricsRecorder.recordCall(AiCallRecord.builder()
+                            .requestId(requestId)
+                            .provider(routing.getProvider())
+                            .model(routing.getProviderModel())
+                            .tenantId(tenantContext.tenantId())
+                            .appId(tenantContext.appId())
+                            .keyId(tenantContext.keyId())
+                            .tokenIn(0L)
+                            .tokenOut(0L)
+                            .latencyMillis(Duration.between(start, Instant.now()).toMillis())
+                            .status(resolveStatus(ex))
+                            .cacheHit(false)
+                            .build());
+                });
     }
 
     private Mono<AttemptResult> callMonoWithFallback(int index,

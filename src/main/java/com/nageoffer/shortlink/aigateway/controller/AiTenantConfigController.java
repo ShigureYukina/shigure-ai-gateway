@@ -6,6 +6,7 @@ import com.nageoffer.shortlink.aigateway.persistence.service.TenantConfigQuerySe
 import com.nageoffer.shortlink.aigateway.security.ConsoleAuthService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.HttpHeaders;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -22,6 +23,7 @@ import java.util.Map;
 @RestController
 @RequestMapping("/v1/tenant-config")
 @Tag(name = "租户配置", description = "DB-backed tenant config 管理")
+@ConditionalOnProperty(prefix = "short-link.ai-gateway.tenant.persistence", name = "enabled", havingValue = "true")
 public class AiTenantConfigController {
 
     private final ConsoleAuthService consoleAuthService;

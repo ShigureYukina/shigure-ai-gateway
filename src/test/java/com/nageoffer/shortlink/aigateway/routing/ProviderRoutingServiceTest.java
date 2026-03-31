@@ -3,6 +3,7 @@ package com.nageoffer.shortlink.aigateway.routing;
 import com.nageoffer.shortlink.aigateway.config.AiGatewayProperties;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
+import org.mockito.Mockito;
 import org.springframework.http.HttpHeaders;
 
 import java.util.List;
@@ -18,7 +19,7 @@ class ProviderRoutingServiceTest {
         properties.getUpstream().getProviderBaseUrl().put("claude", "https://api.anthropic.com");
         properties.getUpstream().getModelAlias().put("claude-compat", "claude:claude-3-5-sonnet-latest");
 
-        ProviderRoutingService service = new ProviderRoutingService(properties);
+        ProviderRoutingService service = new ProviderRoutingService(properties, Mockito.mock(ProviderHealthScoreService.class));
         AiRoutingResult result = service.resolve("claude-compat", new HttpHeaders());
 
         Assertions.assertEquals("claude", result.getProvider());
@@ -35,7 +36,7 @@ class ProviderRoutingServiceTest {
         properties.getRouting().setFallbackEnabled(true);
         properties.getRouting().setProviderPriority(java.util.List.of("openai", "claude"));
 
-        ProviderRoutingService service = new ProviderRoutingService(properties);
+        ProviderRoutingService service = new ProviderRoutingService(properties, Mockito.mock(ProviderHealthScoreService.class));
         AiRoutingResult result = service.resolve("gpt-4o-mini", new HttpHeaders());
 
         Assertions.assertEquals("openai", result.getProvider());
@@ -50,7 +51,7 @@ class ProviderRoutingServiceTest {
         AiGatewayProperties properties = new AiGatewayProperties();
         properties.getUpstream().setDefaultProvider("openai");
 
-        ProviderRoutingService service = new ProviderRoutingService(properties);
+        ProviderRoutingService service = new ProviderRoutingService(properties, Mockito.mock(ProviderHealthScoreService.class));
 
         Assertions.assertThrows(
                 com.nageoffer.shortlink.aigateway.exception.AiGatewayClientException.class,
@@ -65,7 +66,7 @@ class ProviderRoutingServiceTest {
         properties.getUpstream().getProviderBaseUrl().put("openai", "https://api.openai.com");
         properties.getUpstream().getProviderBaseUrl().put("claude", "https://api.anthropic.com");
 
-        ProviderRoutingService service = new ProviderRoutingService(properties);
+        ProviderRoutingService service = new ProviderRoutingService(properties, Mockito.mock(ProviderHealthScoreService.class));
         HttpHeaders headers = new HttpHeaders();
         headers.set("X-AI-Provider", "claude");
         AiRoutingResult result = service.resolve("gpt-4o-mini", headers);
@@ -82,7 +83,7 @@ class ProviderRoutingServiceTest {
         properties.getUpstream().getProviderBaseUrl().put("openai", "https://api.openai.com/");
         properties.getUpstream().getModelAlias().put("mini", "gpt-4o-mini");
 
-        ProviderRoutingService service = new ProviderRoutingService(properties);
+        ProviderRoutingService service = new ProviderRoutingService(properties, Mockito.mock(ProviderHealthScoreService.class));
         AiRoutingResult result = service.resolve("mini", new HttpHeaders());
 
         Assertions.assertEquals("openai", result.getProvider());
@@ -100,7 +101,7 @@ class ProviderRoutingServiceTest {
         properties.getRouting().setAbProvider("claude");
         properties.getRouting().setAbPercentage(100);
 
-        ProviderRoutingService service = new ProviderRoutingService(properties);
+        ProviderRoutingService service = new ProviderRoutingService(properties, Mockito.mock(ProviderHealthScoreService.class));
         AiRoutingResult result = service.resolve("gpt-4o-mini", new HttpHeaders());
 
         Assertions.assertEquals("claude", result.getProvider());
@@ -111,7 +112,7 @@ class ProviderRoutingServiceTest {
     @Test
     void shouldNormalizeRoutingConfigUpdateAndClampAbPercentage() {
         AiGatewayProperties properties = new AiGatewayProperties();
-        ProviderRoutingService service = new ProviderRoutingService(properties);
+        ProviderRoutingService service = new ProviderRoutingService(properties, Mockito.mock(ProviderHealthScoreService.class));
 
         Map<String, Object> result = service.updateRoutingConfig(Map.of(
                 "fallbackEnabled", true,

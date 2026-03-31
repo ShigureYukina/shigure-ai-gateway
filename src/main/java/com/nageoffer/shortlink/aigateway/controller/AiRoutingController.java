@@ -13,6 +13,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ServerWebExchange;
 
+import java.util.List;
 import java.util.Map;
 
 @RestController
@@ -47,5 +48,11 @@ public class AiRoutingController {
     public Map<String, Object> simulate(@RequestParam("model") String model,
                                         @RequestParam(value = "samples", defaultValue = "200") int samples) {
         return providerRoutingService.simulateAb(model, samples);
+    }
+
+    @Operation(summary = "查询 Provider 健康分数", description = "返回指定模型下各 Provider 的动态路由健康评分")
+    @GetMapping("/health")
+    public List<?> health(@RequestParam("model") String model) {
+        return providerRoutingService.providerHealthScores(model);
     }
 }

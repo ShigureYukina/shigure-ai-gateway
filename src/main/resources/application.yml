@@ -14,7 +14,7 @@ spring:
   r2dbc:
     url: ${AI_GATEWAY_R2DBC_URL:r2dbc:pool:mysql://127.0.0.1:3306/ai_gateway}
     username: ${AI_GATEWAY_DB_USERNAME:root}
-    password: ${AI_GATEWAY_DB_PASSWORD:root}
+    password: ${AI_GATEWAY_DB_PASSWORD:1056398086}
   cloud:
     service-registry:
       auto-registration:
@@ -46,6 +46,12 @@ management:
   endpoint:
     health:
       show-details: always
+  tracing:
+    sampling:
+      probability: ${OTEL_SAMPLING_RATE:1.0}
+  otlp:
+    tracing:
+      endpoint: ${OTEL_EXPORTER_OTLP_ENDPOINT:http://localhost:4318}/v1/traces
 
 resilience4j:
   circuitbreaker:

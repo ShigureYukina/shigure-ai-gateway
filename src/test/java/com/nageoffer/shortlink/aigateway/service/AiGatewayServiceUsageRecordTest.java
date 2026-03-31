@@ -2,6 +2,7 @@ package com.nageoffer.shortlink.aigateway.service;
 
 import com.nageoffer.shortlink.aigateway.adapter.ProviderAdapter;
 import com.nageoffer.shortlink.aigateway.config.AiGatewayProperties;
+import com.nageoffer.shortlink.aigateway.config.AiGatewayTracer;
 import com.nageoffer.shortlink.aigateway.dto.req.AiChatCompletionMessage;
 import com.nageoffer.shortlink.aigateway.dto.req.AiChatCompletionReqDTO;
 import com.nageoffer.shortlink.aigateway.governance.AiCacheStatsService;
@@ -106,7 +107,8 @@ class AiGatewayServiceUsageRecordTest {
                 Mockito.mock(NoopSemanticCacheService.class),
                 pluginChainService,
                 properties,
-                circuitBreakerFactory
+                circuitBreakerFactory,
+                Mockito.mock(AiGatewayTracer.class)
         );
 
         String body = service.chatCompletion(request(), new HttpHeaders(), new TenantContext("tenant-a", "app-a", "key-a")).block();
@@ -183,7 +185,8 @@ class AiGatewayServiceUsageRecordTest {
                 Mockito.mock(NoopSemanticCacheService.class),
                 pluginChainService,
                 new AiGatewayProperties(),
-                circuitBreakerFactory
+                circuitBreakerFactory,
+                Mockito.mock(AiGatewayTracer.class)
         );
 
         String body = service.chatCompletion(request(), new HttpHeaders(), new TenantContext("tenant-a", "app-a", "key-a")).block();
@@ -227,7 +230,8 @@ class AiGatewayServiceUsageRecordTest {
                 Mockito.mock(NoopSemanticCacheService.class),
                 Mockito.mock(PluginChainService.class),
                 new AiGatewayProperties(),
-                Mockito.mock(ReactiveCircuitBreakerFactory.class)
+                Mockito.mock(ReactiveCircuitBreakerFactory.class),
+                Mockito.mock(AiGatewayTracer.class)
         );
 
         String body = service.chatCompletion(request(), new HttpHeaders(), new TenantContext("tenant-a", "app-a", "key-a")).block();
@@ -281,7 +285,8 @@ class AiGatewayServiceUsageRecordTest {
                 Mockito.mock(NoopSemanticCacheService.class),
                 Mockito.mock(PluginChainService.class),
                 new AiGatewayProperties(),
-                Mockito.mock(ReactiveCircuitBreakerFactory.class)
+                Mockito.mock(ReactiveCircuitBreakerFactory.class),
+                Mockito.mock(AiGatewayTracer.class)
         );
 
         RuntimeException exception = Assertions.assertThrows(RuntimeException.class,
@@ -330,7 +335,8 @@ class AiGatewayServiceUsageRecordTest {
                 Mockito.mock(NoopSemanticCacheService.class),
                 pluginChainService,
                 new AiGatewayProperties(),
-                Mockito.mock(ReactiveCircuitBreakerFactory.class)
+                Mockito.mock(ReactiveCircuitBreakerFactory.class),
+                Mockito.mock(AiGatewayTracer.class)
         );
 
         AiGatewayClientException exception = Assertions.assertThrows(AiGatewayClientException.class,
@@ -397,7 +403,8 @@ class AiGatewayServiceUsageRecordTest {
                 Mockito.mock(NoopSemanticCacheService.class),
                 pluginChainService,
                 new AiGatewayProperties(),
-                circuitBreakerFactory
+                circuitBreakerFactory,
+                Mockito.mock(AiGatewayTracer.class)
         );
 
         RuntimeException exception = Assertions.assertThrows(RuntimeException.class,
