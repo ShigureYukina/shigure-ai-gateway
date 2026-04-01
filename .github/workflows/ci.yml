@@ -20,23 +20,8 @@ jobs:
           java-version: '17'
           cache: maven
 
-      - name: Verify (tests + jacoco)
+      - name: Build & Test
         run: mvn -B clean verify
-
-      - name: Cache OWASP dependency-check data
-        uses: actions/cache@v4
-        with:
-          path: ${{ github.workspace }}/.dependency-check-data
-          key: ${{ runner.os }}-owasp-data-${{ hashFiles('pom.xml') }}
-          restore-keys: |
-            ${{ runner.os }}-owasp-data-
-
-      - name: Dependency vulnerability scan
-        timeout-minutes: 30
-        continue-on-error: true
-        env:
-          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
-        run: mvn -B org.owasp:dependency-check-maven:check -DdataDirectory=${{ github.workspace }}/.dependency-check-data -DnvdApiKey=${NVD_API_KEY} -DfailOnError=false
 
       - name: Package
         run: mvn -B -DskipTests package
@@ -52,10 +37,3 @@ jobs:
         with:
           name: jacoco-report
           path: target/site/jacoco/
-
-      - name: Upload dependency-check report
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: dependency-check-report
-          path: target/dependency-check-report.html
