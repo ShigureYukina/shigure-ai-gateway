@@ -1,6 +1,10 @@
 # Maven
 target/
 .mvn/
+pom.xml.versionsBackup
+release.properties
+dependency-reduced-pom.xml
+.flattened-pom.xml
 
 # Logs
 *.log
@@ -26,19 +30,32 @@ NUL
 # IDE
 .idea/
 *.iml
+*.ipr
+*.iws
 .classpath
 .project
 .settings/
 .factorypath
+.apt_generated/
+/bin/
 .vscode/
 
 # OS
 .DS_Store
 Thumbs.db
+Desktop.ini
+ehthumbs.db
+$RECYCLE.BIN/
 
 # Python
 __pycache__/
 *.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 
 # Local tool state
 .dependency-check-data/

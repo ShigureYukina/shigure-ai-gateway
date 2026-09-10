@@ -225,8 +225,6 @@ JaCoCo 报告：`target/site/jacoco/index.html`
   - 支持策略：`static` / `dynamic` / `cost-optimized` / `latency-optimized`
 - **语义缓存**：Trigram Jaccard 相似度匹配，阈值可配置（默认 0.85）
 
-> 建议在 CI 中配置 `NVD_API_KEY`（GitHub Secrets）以减少 dependency-check 数据更新时间。
-
 ---
 
 ## 本地“近真实”E2E 模拟
@@ -249,7 +247,7 @@ powershell -ExecutionPolicy Bypass -File "scripts/simulate_e2e.ps1"
 ## 工程化能力
 
 - CI：`.github/workflows/ci.yml`（`clean verify` + 覆盖率门禁 + 打包上传）
-- 安全扫描：OWASP Dependency-Check（支持 `NVD_API_KEY`）
+- 安全扫描：OWASP Dependency-Check（按需运行 `mvn dependency-check:check`，未纳入 CI）
 - 协作规范：`AGENTS.md`
 - API 清单：`docs/api-inventory.md`
 
