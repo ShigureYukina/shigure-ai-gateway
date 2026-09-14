@@ -59,3 +59,12 @@ venv/
 
 # Local tool state
 .dependency-check-data/
+
+# Local agent / tooling state
+.codebuddy/
+.edge_tmp/
+.tmplibs/
+
+# Personal files — never publish (含手机号/邮箱)
+resume.html
+新建文本文档.txt
