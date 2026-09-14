@@ -54,6 +54,14 @@ management:
       endpoint: ${OTEL_EXPORTER_OTLP_ENDPOINT:http://localhost:4318}/v1/traces
 
 resilience4j:
+  # 上游为 LLM，首包/整段响应普遍超过 Spring Cloud CircuitBreaker 默认的 1s TimeLimiter，
+  # 不改会让所有正常调用被误判为超时；此处与 timeout-retry.read-timeout 对齐。
+  timelimiter:
+    instances:
+      provider-openai:
+        timeout-duration: 60s
+      provider-claude:
+        timeout-duration: 60s
   circuitbreaker:
     instances:
       provider-openai:
