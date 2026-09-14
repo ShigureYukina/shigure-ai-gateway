@@ -6,6 +6,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 import org.springframework.test.web.reactive.server.WebTestClient;
+import reactor.core.publisher.Mono;
 
 import static org.mockito.ArgumentMatchers.eq;
 
@@ -23,13 +24,13 @@ class AiObservabilityControllerTest {
     @Test
     void shouldReturnCurrentHourModelMetrics() {
         Mockito.when(metricsRecorder.currentHourSnapshot(eq("gpt-4o-mini")))
-                .thenReturn(ModelMetricsSnapshot.builder()
+                .thenReturn(Mono.just(ModelMetricsSnapshot.builder()
                         .model("gpt-4o-mini")
                         .callCount(12L)
                         .successRate(0.75D)
                         .p95LatencyMillis(321L)
                         .totalCost(1.23D)
-                        .build());
+                        .build()));
 
         webTestClient.get()
                 .uri("/v1/metrics/models/gpt-4o-mini")

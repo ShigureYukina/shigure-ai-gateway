@@ -1,40 +1,40 @@
 package com.nageoffer.shortlink.aigateway.governance;
 
-import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
-import org.springframework.data.redis.core.StringRedisTemplate;
-import org.springframework.data.redis.core.ValueOperations;
+import org.springframework.data.redis.core.ReactiveStringRedisTemplate;
+import org.springframework.data.redis.core.ReactiveValueOperations;
+import reactor.core.publisher.Mono;
+import reactor.test.StepVerifier;
 
 import java.time.Duration;
-import java.util.Optional;
 
 import static org.mockito.ArgumentMatchers.eq;
 
 class RedisResponseCacheServiceTest {
 
     @Test
+    @SuppressWarnings("unchecked")
     void shouldGetPutAndEvictWithPrefix() {
-        StringRedisTemplate redisTemplate = Mockito.mock(StringRedisTemplate.class);
-        @SuppressWarnings("unchecked")
-        ValueOperations<String, String> valueOps = Mockito.mock(ValueOperations.class);
+        ReactiveStringRedisTemplate redisTemplate = Mockito.mock(ReactiveStringRedisTemplate.class);
+        ReactiveValueOperations<String, String> valueOps = Mockito.mock(ReactiveValueOperations.class);
         Mockito.when(redisTemplate.opsForValue()).thenReturn(valueOps);
 
         RedisResponseCacheService service = new RedisResponseCacheService(redisTemplate);
         Duration ttl = Duration.ofSeconds(30);
 
-        service.put("k1", "v1", ttl);
+        Mockito.when(valueOps.set(eq("short-link:ai-gateway:cache:k1"), eq("v1"), eq(ttl))).thenReturn(Mono.just(true));
+        StepVerifier.create(service.put("k1", "v1", ttl)).verifyComplete();
         Mockito.verify(valueOps).set(eq("short-link:ai-gateway:cache:k1"), eq("v1"), eq(ttl));
 
-        Mockito.when(valueOps.get("short-link:ai-gateway:cache:k1")).thenReturn("cached");
-        Optional<String> cached = service.get("k1");
-        Assertions.assertTrue(cached.isPresent());
-        Assertions.assertEquals("cached", cached.get());
+        Mockito.when(valueOps.get("short-link:ai-gateway:cache:k1")).thenReturn(Mono.just("cached"));
+        StepVerifier.create(service.get("k1")).expectNext("cached").verifyComplete();
 
-        Mockito.when(valueOps.get("short-link:ai-gateway:cache:k2")).thenReturn(null);
-        Assertions.assertTrue(service.get("k2").isEmpty());
+        Mockito.when(valueOps.get("short-link:ai-gateway:cache:k2")).thenReturn(Mono.empty());
+        StepVerifier.create(service.get("k2")).verifyComplete();
 
-        service.evict("k1");
+        Mockito.when(redisTemplate.delete("short-link:ai-gateway:cache:k1")).thenReturn(Mono.just(1L));
+        StepVerifier.create(service.evict("k1")).verifyComplete();
         Mockito.verify(redisTemplate).delete("short-link:ai-gateway:cache:k1");
     }
 }

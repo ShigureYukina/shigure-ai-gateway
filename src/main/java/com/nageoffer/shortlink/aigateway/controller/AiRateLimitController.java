@@ -12,6 +12,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ServerWebExchange;
+import reactor.core.publisher.Mono;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -86,19 +87,21 @@ public class AiRateLimitController {
 
     @Operation(summary = "查询当前配额用量", description = "按当前请求头维度计算 quotaKey 并返回 minute/day 用量")
     @GetMapping("/usage")
-    public Map<String, Object> usage(@RequestParam("provider") String provider,
-                                     @RequestParam("model") String model,
-                                     ServerWebExchange exchange) {
+    public Mono<Map<String, Object>> usage(@RequestParam("provider") String provider,
+                                           @RequestParam("model") String model,
+                                           ServerWebExchange exchange) {
         HttpHeaders headers = exchange.getRequest().getHeaders();
-        Map<String, Object> usage = redisTokenQuotaService.currentUsage(headers, provider, model);
-        Map<String, Object> response = new LinkedHashMap<>(usage);
         Map<String, Object> headerPreview = new LinkedHashMap<>();
         headerPreview.put("userId", headers.getFirst("userId"));
         headerPreview.put("xForwardedFor", headers.getFirst("X-Forwarded-For"));
         headerPreview.put("xRealIp", headers.getFirst("X-Real-IP"));
         headerPreview.put("xConsumer", headers.getFirst("X-Consumer"));
-        response.put("headerPreview", headerPreview);
-        return response;
+        return redisTokenQuotaService.currentUsage(headers, provider, model)
+                .map(usage -> {
+                    Map<String, Object> response = new LinkedHashMap<>(usage);
+                    response.put("headerPreview", headerPreview);
+                    return response;
+                });
     }
 
     private Long parsePositiveLong(Object value) {

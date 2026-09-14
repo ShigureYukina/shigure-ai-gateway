@@ -26,20 +26,19 @@ import com.nageoffer.shortlink.aigateway.tenant.TenantModelPolicyService;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentMatchers;
 import org.mockito.Mockito;
 import org.springframework.cloud.client.circuitbreaker.ReactiveCircuitBreakerFactory;
-import org.springframework.data.redis.core.HashOperations;
-import org.springframework.data.redis.core.ListOperations;
-import org.springframework.data.redis.core.StringRedisTemplate;
-import org.springframework.data.redis.core.ZSetOperations;
-import org.springframework.data.redis.core.script.DefaultRedisScript;
+import org.springframework.data.redis.core.ReactiveStringRedisTemplate;
+import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.reactive.server.WebTestClient;
 import org.springframework.web.reactive.function.client.WebClient;
+import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
 
 import java.util.List;
-import java.util.Optional;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
@@ -62,7 +61,7 @@ class MultiTenantGatewayFlowTest {
                 .build());
 
         RedisResponseCacheService responseCacheService = Mockito.mock(RedisResponseCacheService.class);
-        Mockito.when(responseCacheService.get(anyString())).thenReturn(Optional.of("{\"id\":\"global-cache\"}"));
+        Mockito.when(responseCacheService.get(anyString())).thenReturn(Mono.just("{\"id\":\"global-cache\"}"));
 
         AiGatewayMetricsRecorder metricsRecorder = metricsRecorder(properties, new SimpleMeterRegistry());
         AiGatewayService service = gatewayService(properties, providerRoutingService, responseCacheService, Mockito.mock(RedisTokenQuotaService.class), metricsRecorder);
@@ -97,7 +96,7 @@ class MultiTenantGatewayFlowTest {
                 .build());
 
         RedisResponseCacheService responseCacheService = Mockito.mock(RedisResponseCacheService.class);
-        Mockito.when(responseCacheService.get(anyString())).thenReturn(Optional.of("{\"id\":\"tenant-cache\"}"));
+        Mockito.when(responseCacheService.get(anyString())).thenReturn(Mono.just("{\"id\":\"tenant-cache\"}"));
 
         SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
         AiGatewayMetricsRecorder metricsRecorder = metricsRecorder(properties, meterRegistry);
@@ -144,9 +143,9 @@ class MultiTenantGatewayFlowTest {
                 .upstreamUri("http://localhost")
                 .build());
 
-        StringRedisTemplate redisTemplate = Mockito.mock(StringRedisTemplate.class);
-        Mockito.when(redisTemplate.execute(any(DefaultRedisScript.class), anyList(), anyString(), anyString(), anyString(), anyString(), anyString(), anyString(), anyString()))
-                .thenReturn(0L);
+        ReactiveStringRedisTemplate redisTemplate = Mockito.mock(ReactiveStringRedisTemplate.class);
+        Mockito.when(redisTemplate.execute(ArgumentMatchers.<RedisScript<Long>>any(), anyList(), anyList()))
+                .thenReturn(Flux.just(0L));
 
         SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
         AiGatewayMetricsRecorder metricsRecorder = metricsRecorder(properties, meterRegistry);
@@ -206,10 +205,9 @@ class MultiTenantGatewayFlowTest {
     }
 
     private AiGatewayMetricsRecorder metricsRecorder(AiGatewayProperties properties, SimpleMeterRegistry meterRegistry) {
-        StringRedisTemplate redisTemplate = Mockito.mock(StringRedisTemplate.class);
-        Mockito.when(redisTemplate.opsForList()).thenReturn(Mockito.mock(ListOperations.class));
-        Mockito.when(redisTemplate.opsForHash()).thenReturn(Mockito.mock(HashOperations.class));
-        Mockito.when(redisTemplate.opsForZSet()).thenReturn(Mockito.mock(ZSetOperations.class));
+        ReactiveStringRedisTemplate redisTemplate = Mockito.mock(ReactiveStringRedisTemplate.class);
+        Mockito.when(redisTemplate.execute(ArgumentMatchers.<RedisScript<Long>>any(), anyList(), anyList()))
+                .thenReturn(Flux.just(1L));
         return new AiGatewayMetricsRecorder(redisTemplate, new CostEstimator(properties), meterRegistry, properties);
     }
 

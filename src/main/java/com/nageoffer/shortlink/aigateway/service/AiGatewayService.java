@@ -29,6 +29,7 @@ import com.nageoffer.shortlink.aigateway.routing.ProviderRoutingService;
 import com.nageoffer.shortlink.aigateway.tenant.TenantContext;
 import com.nageoffer.shortlink.aigateway.tenant.TenantModelPolicyService;
 import io.micrometer.tracing.Span;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.http.MediaType;
@@ -50,6 +51,7 @@ import java.util.function.Predicate;
 import java.util.stream.Collectors;
 
 @Service
+@Slf4j
 /**
  * AI 网关核心编排服务。
  * <p>
@@ -147,75 +149,83 @@ public class AiGatewayService {
         HttpHeaders forwardHeaders = buildForwardHeaders(headers, requestId);
         boolean cacheEnabled = aiCacheControlService.enabledForRequest(headers, false);
         String cacheKey = cacheEnabled ? aiCacheKeyService.build(tenantContext, routing.getProvider(), routing.getProviderModel(), request) : null;
-        if (cacheEnabled) {
-            java.util.Optional<String> cached = redisResponseCacheService.get(cacheKey);
-            if (cached.isPresent()) {
-                aiGatewayTracer.tag(span, "cache.hit", "true");
-                aiCacheStatsService.recordHit();
-                metricsRecorder.recordTenantCacheEvent(tenantContext.tenantId(), "hit");
-                metricsRecorder.recordCall(AiCallRecord.builder()
-                        .requestId(requestId)
-                        .provider(routing.getProvider())
-                        .model(routing.getProviderModel())
-                        .tenantId(tenantContext.tenantId())
-                        .appId(tenantContext.appId())
-                        .keyId(tenantContext.keyId())
-                        .tokenIn(0L)
-                        .tokenOut(0L)
-                        .latencyMillis(0L)
-                        .status(200)
-                        .cacheHit(true)
-                        .build());
-                aiGatewayTracer.end(span);
-                return Mono.just(cached.get());
-            }
-            java.util.Optional<String> semanticCached = semanticCacheService.find(routing.getProvider(), routing.getProviderModel(), request);
-            if (semanticCached.isPresent()) {
-                aiGatewayTracer.tag(span, "cache.hit", "semantic");
-                aiCacheStatsService.recordSemanticHit();
-                aiGatewayTracer.end(span);
-                return Mono.just(semanticCached.get());
-            }
-            aiCacheStatsService.recordMiss();
-            metricsRecorder.recordTenantCacheEvent(tenantContext.tenantId(), "miss");
-        }
-        QuotaPreCheckContext quotaContext = redisTokenQuotaService.preCheck(tenantContext, headers, routing.getProvider(), routing.getProviderModel(), request);
         List<RouteTarget> routeTargets = buildRouteTargets(routing);
-        Instant start = Instant.now();
-        return callMonoWithFallback(0, routeTargets, request, forwardHeaders, requestId, start)
-                .doOnSuccess(attemptResult -> {
-                    String body = attemptResult.body();
-                    UsageDetail usageDetail = usageExtractor.extractUsage(body);
-                    Long totalTokens = usageDetail == null ? null : usageDetail.getTotalTokens();
-                    if (totalTokens != null) {
-                        redisTokenQuotaService.adjustByActualUsage(quotaContext, totalTokens);
-                    }
-                    if (cacheEnabled) {
-                        redisResponseCacheService.put(cacheKey, body, properties.getCache().getTtl());
-                        semanticCacheService.put(routing.getProvider(), routing.getProviderModel(), request, body);
-                        aiCacheStatsService.recordWrite();
-                        metricsRecorder.recordTenantCacheEvent(tenantContext.tenantId(), "write");
-                    }
-                    aiGatewayTracer.tag(span, "actual.provider", attemptResult.provider());
-                    aiGatewayTracer.tag(span, "actual.model", attemptResult.providerModel());
-                    metricsRecorder.recordCall(AiCallRecord.builder()
-                            .requestId(requestId)
-                            .provider(attemptResult.provider())
-                            .model(attemptResult.providerModel())
-                            .tenantId(tenantContext.tenantId())
-                            .appId(tenantContext.appId())
-                            .keyId(tenantContext.keyId())
-                            .tokenIn(usageDetail == null ? 0L : safeLong(usageDetail.getPromptTokens()))
-                            .tokenOut(usageDetail == null ? 0L : safeLong(usageDetail.getCompletionTokens()))
-                            .latencyMillis(Duration.between(start, Instant.now()).toMillis())
-                            .status(200)
-                            .cacheHit(false)
-                            .build());
-                    aiGatewayTracer.end(span);
-                })
-                .doOnError(ex -> {
-                    aiGatewayTracer.tag(span, "error", ex.getMessage());
-                    aiGatewayTracer.endWithError(span, ex);
+
+        Mono<String> cachedResponse = cacheEnabled
+                ? loadFromCache(cacheKey, span, routing, request, tenantContext, requestId)
+                : Mono.empty();
+
+        return cachedResponse.switchIfEmpty(Mono.defer(() -> {
+            Instant start = Instant.now();
+            return redisTokenQuotaService.preCheck(tenantContext, headers, routing.getProvider(), routing.getProviderModel(), request)
+                    .flatMap(quotaContext -> callMonoWithFallback(0, routeTargets, request, forwardHeaders, requestId, start)
+                            .doOnSuccess(attemptResult -> {
+                                String body = attemptResult.body();
+                                UsageDetail usageDetail = usageExtractor.extractUsage(body);
+                                Long totalTokens = usageDetail == null ? null : usageDetail.getTotalTokens();
+                                if (totalTokens != null) {
+                                    redisTokenQuotaService.adjustByActualUsage(quotaContext, totalTokens)
+                                            .subscribe(ignored -> {
+                                            }, ex -> log.warn("failed to settle token quota: requestId={}", requestId, ex));
+                                }
+                                if (cacheEnabled) {
+                                    redisResponseCacheService.put(cacheKey, body, properties.getCache().getTtl())
+                                            .subscribe(ignored -> {
+                                            }, ex -> log.warn("failed to write response cache: requestId={}", requestId, ex));
+                                    semanticCacheService.put(routing.getProvider(), routing.getProviderModel(), request, body);
+                                    aiCacheStatsService.recordWrite();
+                                    metricsRecorder.recordTenantCacheEvent(tenantContext.tenantId(), "write");
+                                }
+                                aiGatewayTracer.tag(span, "actual.provider", attemptResult.provider());
+                                aiGatewayTracer.tag(span, "actual.model", attemptResult.providerModel());
+                                metricsRecorder.recordCall(AiCallRecord.builder()
+                                        .requestId(requestId)
+                                        .provider(attemptResult.provider())
+                                        .model(attemptResult.providerModel())
+                                        .tenantId(tenantContext.tenantId())
+                                        .appId(tenantContext.appId())
+                                        .keyId(tenantContext.keyId())
+                                        .tokenIn(usageDetail == null ? 0L : safeLong(usageDetail.getPromptTokens()))
+                                        .tokenOut(usageDetail == null ? 0L : safeLong(usageDetail.getCompletionTokens()))
+                                        .latencyMillis(Duration.between(start, Instant.now()).toMillis())
+                                        .status(200)
+                                        .cacheHit(false)
+                                        .build());
+                                aiGatewayTracer.end(span);
+                            })
+                            .doOnError(ex -> {
+                                aiGatewayTracer.tag(span, "error", ex.getMessage());
+                                aiGatewayTracer.endWithError(span, ex);
+                                metricsRecorder.recordCall(AiCallRecord.builder()
+                                        .requestId(requestId)
+                                        .provider(routing.getProvider())
+                                        .model(routing.getProviderModel())
+                                        .tenantId(tenantContext.tenantId())
+                                        .appId(tenantContext.appId())
+                                        .keyId(tenantContext.keyId())
+                                        .tokenIn(0L)
+                                        .tokenOut(0L)
+                                        .latencyMillis(Duration.between(start, Instant.now()).toMillis())
+                                        .status(resolveStatus(ex))
+                                        .cacheHit(false)
+                                        .build());
+                            })
+                            .map(AttemptResult::body));
+        }));
+    }
+
+    /**
+     * 精确缓存 + 语义缓存读取：命中则结束 span 并返回缓存体，未命中记录 miss 统计后返回空 Mono。
+     * <p>
+     * 走响应式 Redis，避免在 Netty 事件循环上执行阻塞调用。
+     */
+    private Mono<String> loadFromCache(String cacheKey, Span span, AiRoutingResult routing,
+                                       AiChatCompletionReqDTO request, TenantContext tenantContext, String requestId) {
+        return redisResponseCacheService.get(cacheKey)
+                .flatMap(cached -> {
+                    aiGatewayTracer.tag(span, "cache.hit", "true");
+                    aiCacheStatsService.recordHit();
+                    metricsRecorder.recordTenantCacheEvent(tenantContext.tenantId(), "hit");
                     metricsRecorder.recordCall(AiCallRecord.builder()
                             .requestId(requestId)
                             .provider(routing.getProvider())
@@ -225,12 +235,25 @@ public class AiGatewayService {
                             .keyId(tenantContext.keyId())
                             .tokenIn(0L)
                             .tokenOut(0L)
-                            .latencyMillis(Duration.between(start, Instant.now()).toMillis())
-                            .status(resolveStatus(ex))
-                            .cacheHit(false)
+                            .latencyMillis(0L)
+                            .status(200)
+                            .cacheHit(true)
                             .build());
+                    aiGatewayTracer.end(span);
+                    return Mono.just(cached);
                 })
-                .map(AttemptResult::body);
+                .switchIfEmpty(Mono.defer(() -> {
+                    java.util.Optional<String> semanticCached = semanticCacheService.find(routing.getProvider(), routing.getProviderModel(), request);
+                    if (semanticCached.isPresent()) {
+                        aiGatewayTracer.tag(span, "cache.hit", "semantic");
+                        aiCacheStatsService.recordSemanticHit();
+                        aiGatewayTracer.end(span);
+                        return Mono.just(semanticCached.get());
+                    }
+                    aiCacheStatsService.recordMiss();
+                    metricsRecorder.recordTenantCacheEvent(tenantContext.tenantId(), "miss");
+                    return Mono.empty();
+                }));
     }
 
     /**
@@ -250,11 +273,11 @@ public class AiGatewayService {
         aiGatewayTracer.tag(span, "tenant.id", tenantContext.tenantId());
         aiGatewayTracer.tag(span, "stream", "true");
         HttpHeaders forwardHeaders = buildForwardHeaders(headers, requestId);
-        redisTokenQuotaService.preCheck(tenantContext, headers, routing.getProvider(), routing.getProviderModel(), request);
         List<RouteTarget> routeTargets = buildRouteTargets(routing);
         RouteTarget primaryRoute = routeTargets.get(0);
         Instant start = Instant.now();
-        return callStreamWithFallback(0, routeTargets, request, forwardHeaders, requestId, start)
+        return redisTokenQuotaService.preCheck(tenantContext, headers, routing.getProvider(), routing.getProviderModel(), request)
+                .thenMany(callStreamWithFallback(0, routeTargets, request, forwardHeaders, requestId, start))
                 .doOnComplete(() -> {
                     aiGatewayTracer.tag(span, "actual.provider", primaryRoute.provider());
                     aiGatewayTracer.tag(span, "actual.model", primaryRoute.providerModel());

@@ -9,6 +9,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import reactor.core.publisher.Mono;
 
 @RestController
 @RequiredArgsConstructor
@@ -20,7 +21,7 @@ public class AiObservabilityController {
 
     @Operation(summary = "查询模型当前小时指标", description = "返回调用量、成功率、P95 延迟、成本")
     @GetMapping("/models/{model}")
-    public ModelMetricsSnapshot currentHourModelMetrics(@PathVariable("model") String model) {
+    public Mono<ModelMetricsSnapshot> currentHourModelMetrics(@PathVariable("model") String model) {
         return aiGatewayMetricsRecorder.currentHourSnapshot(model);
     }
 }

@@ -6,6 +6,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 import org.springframework.test.web.reactive.server.WebTestClient;
+import reactor.core.publisher.Mono;
 
 import java.util.List;
 import java.util.Map;
@@ -58,7 +59,7 @@ class AiRateLimitControllerTest {
     @Test
     void shouldReturnUsageWithHeaderPreview() {
         Mockito.when(redisTokenQuotaService.currentUsage(any(), eq("openai"), eq("gpt-4o-mini")))
-                .thenReturn(Map.of("minuteUsed", 10L, "dayUsed", 20L));
+                .thenReturn(Mono.just(Map.of("minuteUsed", 10L, "dayUsed", 20L)));
 
         webTestClient.get()
                 .uri("/v1/rate-limit/usage?provider=openai&model=gpt-4o-mini")

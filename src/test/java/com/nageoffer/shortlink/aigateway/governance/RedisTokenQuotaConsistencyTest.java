@@ -8,10 +8,12 @@ import com.nageoffer.shortlink.aigateway.observability.AiGatewayMetricsRecorder;
 import com.nageoffer.shortlink.aigateway.tenant.TenantContext;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentMatchers;
 import org.mockito.Mockito;
-import org.springframework.data.redis.core.StringRedisTemplate;
-import org.springframework.data.redis.core.script.DefaultRedisScript;
+import org.springframework.data.redis.core.ReactiveStringRedisTemplate;
+import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.http.HttpHeaders;
+import reactor.core.publisher.Flux;
 
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
@@ -20,9 +22,7 @@ import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
-import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
-import static org.mockito.ArgumentMatchers.anyString;
 
 class RedisTokenQuotaConsistencyTest {
 
@@ -35,23 +35,24 @@ class RedisTokenQuotaConsistencyTest {
         properties.getRateLimit().setDefaultTokenQuotaPerDay(10000L);
         properties.getRateLimit().setMinTokenReserve(100L);
 
-        StringRedisTemplate redisTemplate = Mockito.mock(StringRedisTemplate.class);
+        ReactiveStringRedisTemplate redisTemplate = Mockito.mock(ReactiveStringRedisTemplate.class);
         AtomicLong minuteUsage = new AtomicLong(0L);
         AtomicLong dayUsage = new AtomicLong(0L);
 
-        Mockito.when(redisTemplate.execute(any(DefaultRedisScript.class), anyList(), anyString(), anyString(), anyString(), anyString(), anyString(), anyString(), anyString()))
+        Mockito.when(redisTemplate.execute(ArgumentMatchers.<RedisScript<Long>>any(), anyList(), anyList()))
                 .thenAnswer(invocation -> {
-                    long reserve = Long.parseLong(invocation.getArgument(2));
-                    long minuteLimit = Long.parseLong(invocation.getArgument(3));
-                    long dayLimit = Long.parseLong(invocation.getArgument(4));
-                    long monthLimit = Long.parseLong(invocation.getArgument(5));
+                    List<String> args = invocation.getArgument(2);
+                    long reserve = Long.parseLong(args.get(0));
+                    long minuteLimit = Long.parseLong(args.get(1));
+                    long dayLimit = Long.parseLong(args.get(2));
+                    long monthLimit = Long.parseLong(args.get(3));
                     synchronized (this) {
                         if (minuteUsage.get() + reserve > minuteLimit || dayUsage.get() + reserve > dayLimit || dayUsage.get() + reserve > monthLimit) {
-                            return 0L;
+                            return Flux.just(0L);
                         }
                         minuteUsage.addAndGet(reserve);
                         dayUsage.addAndGet(reserve);
-                        return 1L;
+                        return Flux.just(1L);
                     }
                 });
 
@@ -81,7 +82,7 @@ class RedisTokenQuotaConsistencyTest {
         for (int i = 0; i < parallelRequests; i++) {
             executor.submit(() -> {
                 try {
-                    service.preCheck(new TenantContext("tenant-a", "app-a", "key-a"), headers, "openai", "gpt-4o-mini", request);
+                    service.preCheck(new TenantContext("tenant-a", "app-a", "key-a"), headers, "openai", "gpt-4o-mini", request).block();
                     successCount.incrementAndGet();
                 } catch (AiGatewayClientException ex) {
                     rejectedCount.incrementAndGet();
