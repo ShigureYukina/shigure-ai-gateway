@@ -1,9 +1,14 @@
 package com.nageoffer.shortlink.aigateway.persistence.service;
 
 import com.nageoffer.shortlink.aigateway.config.AiGatewayProperties;
+import com.nageoffer.shortlink.aigateway.crypto.AesGcmSecretCipher;
+import com.nageoffer.shortlink.aigateway.crypto.SecretCipher;
+import com.nageoffer.shortlink.aigateway.crypto.SecretHasher;
 import com.nageoffer.shortlink.aigateway.exception.AiGatewayClientException;
 import com.nageoffer.shortlink.aigateway.exception.AiGatewayErrorCode;
+import com.alibaba.fastjson2.JSON;
 import com.nageoffer.shortlink.aigateway.persistence.entity.AiModelPriceEntity;
+import com.nageoffer.shortlink.aigateway.persistence.entity.ProviderCredentialEntity;
 import com.nageoffer.shortlink.aigateway.persistence.entity.TenantAppEntity;
 import com.nageoffer.shortlink.aigateway.persistence.entity.TenantApiKeyEntity;
 import com.nageoffer.shortlink.aigateway.persistence.entity.TenantEntity;
@@ -12,6 +17,7 @@ import com.nageoffer.shortlink.aigateway.persistence.entity.TenantModelMappingEn
 import com.nageoffer.shortlink.aigateway.persistence.entity.TenantModelPolicyEntity;
 import com.nageoffer.shortlink.aigateway.persistence.entity.TenantQuotaPolicyEntity;
 import com.nageoffer.shortlink.aigateway.persistence.repository.AiModelPriceRepository;
+import com.nageoffer.shortlink.aigateway.persistence.repository.ProviderCredentialRepository;
 import com.nageoffer.shortlink.aigateway.persistence.repository.TenantAppRepository;
 import com.nageoffer.shortlink.aigateway.persistence.repository.TenantApiKeyRepository;
 import com.nageoffer.shortlink.aigateway.persistence.repository.TenantRepository;
@@ -19,7 +25,10 @@ import com.nageoffer.shortlink.aigateway.persistence.repository.TenantModelAllow
 import com.nageoffer.shortlink.aigateway.persistence.repository.TenantModelMappingRepository;
 import com.nageoffer.shortlink.aigateway.persistence.repository.TenantModelPolicyRepository;
 import com.nageoffer.shortlink.aigateway.persistence.repository.TenantQuotaPolicyRepository;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.http.HttpHeaders;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 import reactor.core.publisher.Flux;
@@ -31,6 +40,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
+@Slf4j
 @Service
 @ConditionalOnProperty(prefix = "short-link.ai-gateway.tenant.persistence", name = "enabled", havingValue = "true")
 public class TenantConfigManagementService {
@@ -45,7 +55,15 @@ public class TenantConfigManagementService {
     private final TenantModelMappingRepository tenantModelMappingRepository;
     private final TenantQuotaPolicyRepository tenantQuotaPolicyRepository;
     private final AiModelPriceRepository aiModelPriceRepository;
+    private final ProviderCredentialRepository providerCredentialRepository;
 
+    private final SecretCipher secretCipher;
+
+    private final SecretHasher secretHasher;
+
+    /**
+     * 不加密的装配：给单测与"接库但没配主密钥"的场景用，行为与加固前完全一致。
+     */
     public TenantConfigManagementService(AiGatewayProperties properties,
                                          TenantConfigQueryService tenantConfigQueryService,
                                          TenantRepository tenantRepository,
@@ -55,7 +73,28 @@ public class TenantConfigManagementService {
                                          TenantModelAllowedRepository tenantModelAllowedRepository,
                                          TenantModelMappingRepository tenantModelMappingRepository,
                                          TenantQuotaPolicyRepository tenantQuotaPolicyRepository,
-                                         AiModelPriceRepository aiModelPriceRepository) {
+                                         AiModelPriceRepository aiModelPriceRepository,
+                                         ProviderCredentialRepository providerCredentialRepository) {
+        this(properties, tenantConfigQueryService, tenantRepository, tenantAppRepository, tenantApiKeyRepository,
+                tenantModelPolicyRepository, tenantModelAllowedRepository, tenantModelMappingRepository,
+                tenantQuotaPolicyRepository, aiModelPriceRepository, providerCredentialRepository,
+                AesGcmSecretCipher.disabled(), SecretHasher.disabled());
+    }
+
+    @Autowired
+    public TenantConfigManagementService(AiGatewayProperties properties,
+                                         TenantConfigQueryService tenantConfigQueryService,
+                                         TenantRepository tenantRepository,
+                                         TenantAppRepository tenantAppRepository,
+                                         TenantApiKeyRepository tenantApiKeyRepository,
+                                         TenantModelPolicyRepository tenantModelPolicyRepository,
+                                         TenantModelAllowedRepository tenantModelAllowedRepository,
+                                         TenantModelMappingRepository tenantModelMappingRepository,
+                                         TenantQuotaPolicyRepository tenantQuotaPolicyRepository,
+                                         AiModelPriceRepository aiModelPriceRepository,
+                                         ProviderCredentialRepository providerCredentialRepository,
+                                         SecretCipher secretCipher,
+                                         SecretHasher secretHasher) {
         this.properties = properties;
         this.tenantConfigQueryService = tenantConfigQueryService;
         this.tenantRepository = tenantRepository;
@@ -66,6 +105,9 @@ public class TenantConfigManagementService {
         this.tenantModelMappingRepository = tenantModelMappingRepository;
         this.tenantQuotaPolicyRepository = tenantQuotaPolicyRepository;
         this.aiModelPriceRepository = aiModelPriceRepository;
+        this.providerCredentialRepository = providerCredentialRepository;
+        this.secretCipher = secretCipher;
+        this.secretHasher = secretHasher;
     }
 
     public Mono<Map<String, Object>> upsertTenant(Map<String, Object> request) {
@@ -159,16 +201,24 @@ public class TenantConfigManagementService {
                 ));
     }
 
+    /**
+     * 新增或更新平台 API Key。
+     * <p>
+     * 落库的是密文 + 确定性哈希（见 {@code crypto.SecretCipher} / {@code crypto.SecretHasher}）；
+     * 没配主密钥时两者都是原样透传 / 空，行为与加固前完全一致。
+     */
     public Mono<Map<String, Object>> upsertApiKey(Map<String, Object> request) {
         assertPersistenceEnabled();
+        String rawApiKey = required(request, "apiKey");
         TenantApiKeyEntity entity = new TenantApiKeyEntity();
         entity.setTenantId(required(request, "tenantId"));
         entity.setAppId(required(request, "appId"));
         entity.setKeyId(required(request, "keyId"));
-        entity.setApiKey(required(request, "apiKey"));
+        entity.setApiKey(secretCipher.encrypt(rawApiKey));
+        entity.setApiKeyHash(secretHasher.hmac(rawApiKey));
         entity.setEnabled(optionalBoolean(request, "enabled", true));
         entity.setExpiresAt(optionalInstant(request, "expiresAt"));
-        return tenantApiKeyRepository.findByApiKey(entity.getApiKey())
+        return findApiKeyRow(rawApiKey)
                 .defaultIfEmpty(new TenantApiKeyEntity())
                 .flatMap(existing -> {
                     entity.setId(existing.getId());
@@ -271,9 +321,122 @@ public class TenantConfigManagementService {
                 )));
     }
 
+    /**
+     * 新增或更新上游凭证。
+     * <p>
+     * {@code tenantId} 为空时写入平台级凭证（伪租户 {@code *}）；
+     * 指定 tenantId 时写入该租户的 BYOK 凭证，运行期优先于平台级生效。
+     */
+    public Mono<Map<String, Object>> upsertProviderCredential(String tenantId, String provider, Map<String, Object> request) {
+        assertPersistenceEnabled();
+        String scopeTenant = StringUtils.hasText(tenantId) ? tenantId.trim() : ProviderCredentialEntity.GLOBAL_TENANT_ID;
+        ProviderCredentialEntity entity = new ProviderCredentialEntity();
+        entity.setTenantId(scopeTenant);
+        entity.setProvider(provider);
+        entity.setApiKey(secretCipher.encrypt(required(request, "apiKey")));
+        entity.setAuthHeader(optionalString(request, "authHeader", "Authorization"));
+        entity.setAuthScheme(optionalString(request, "authScheme", "Bearer"));
+        entity.setExtraHeaders(serializeExtraHeaders(request.get("extraHeaders")));
+        entity.setEnabled(optionalBoolean(request, "enabled", true));
+        return providerCredentialRepository.findByTenantIdAndProvider(scopeTenant, provider)
+                .defaultIfEmpty(new ProviderCredentialEntity())
+                .flatMap(existing -> {
+                    entity.setId(existing.getId());
+                    return providerCredentialRepository.save(entity);
+                })
+                .flatMap(saved -> tenantConfigQueryService.refreshFromDatabaseReactive().thenReturn(Map.of(
+                        "tenantId", saved.getTenantId(),
+                        "provider", saved.getProvider(),
+                        "authHeader", Optional.ofNullable(saved.getAuthHeader()).orElse(HttpHeaders.AUTHORIZATION),
+                        "authScheme", Optional.ofNullable(saved.getAuthScheme()).orElse(""),
+                        "apiKeyMasked", maskApiKey(saved.getApiKey()),
+                        "enabled", Boolean.TRUE.equals(saved.getEnabled())
+                )));
+    }
+
+    public Mono<Map<String, Object>> getProviderCredential(String tenantId, String provider) {
+        assertPersistenceEnabled();
+        String scopeTenant = StringUtils.hasText(tenantId) ? tenantId.trim() : ProviderCredentialEntity.GLOBAL_TENANT_ID;
+        return providerCredentialRepository.findByTenantIdAndProvider(scopeTenant, provider)
+                .map(each -> {
+                    Map<String, Object> result = new LinkedHashMap<>();
+                    result.put("found", true);
+                    result.put("tenantId", each.getTenantId());
+                    result.put("provider", each.getProvider());
+                    result.put("authHeader", Optional.ofNullable(each.getAuthHeader()).orElse(HttpHeaders.AUTHORIZATION));
+                    result.put("authScheme", Optional.ofNullable(each.getAuthScheme()).orElse(""));
+                    result.put("apiKeyMasked", maskApiKey(each.getApiKey()));
+                    result.put("enabled", Boolean.TRUE.equals(each.getEnabled()));
+                    return result;
+                })
+                .defaultIfEmpty(Map.of("found", false, "tenantId", scopeTenant, "provider", provider));
+    }
+
+    public Mono<Map<String, Object>> deleteProviderCredential(String tenantId, String provider) {
+        assertPersistenceEnabled();
+        String scopeTenant = StringUtils.hasText(tenantId) ? tenantId.trim() : ProviderCredentialEntity.GLOBAL_TENANT_ID;
+        return providerCredentialRepository.deleteByTenantIdAndProvider(scopeTenant, provider)
+                .then(tenantConfigQueryService.refreshFromDatabaseReactive())
+                .thenReturn(Map.of("tenantId", scopeTenant, "provider", provider, "deleted", true));
+    }
+
+    /**
+     * 只回显凭证尾部，避免管理面把上游 Key 完整吐出。
+     * <p>
+     * 入参是<b>库里的存值</b>（可能是密文），所以先解密再掩码 —— 否则回显的是密文的前 4 位，
+     * 既没有排障价值，还把一个已经加密的值又漏了一次。
+     * 解密失败不抛：这是展示路径，一行坏数据不该让整页凭证都看不了。
+     */
+    private String maskApiKey(String storedApiKey) {
+        String apiKey;
+        try {
+            apiKey = secretCipher.decrypt(storedApiKey);
+        } catch (RuntimeException ex) {
+            log.error("failed to decrypt stored api key for display: {}", ex.getMessage());
+            return "<解密失败>";
+        }
+        if (!StringUtils.hasText(apiKey)) {
+            return "";
+        }
+        if (apiKey.length() <= 8) {
+            return "***";
+        }
+        return apiKey.substring(0, 4) + "***" + apiKey.substring(apiKey.length() - 4);
+    }
+
+    /**
+     * 按明文 Key 找行：配了主密钥就按哈希查，没配就按明文查。
+     * <p>
+     * 哈希查不到时再回退一次明文查：这是给"加密刚开启、{@code SecretMigrationRunner} 还没回填完"
+     * 那个窗口兜底的 —— 少了这一步，重新提交一个未回填的 Key 会插出新行，
+     * 直接撞上 {@code uk_tenant_api_key_key_id} 报唯一键冲突。
+     */
+    private Mono<TenantApiKeyEntity> findApiKeyRow(String rawApiKey) {
+        String hash = secretHasher.hmac(rawApiKey);
+        if (hash == null) {
+            return tenantApiKeyRepository.findByApiKey(rawApiKey);
+        }
+        return tenantApiKeyRepository.findByApiKeyHash(hash)
+                .switchIfEmpty(Mono.defer(() -> tenantApiKeyRepository.findByApiKey(rawApiKey)));
+    }
+
+    private String serializeExtraHeaders(Object value) {
+        if (!(value instanceof Map<?, ?> mapValue) || mapValue.isEmpty()) {
+            return null;
+        }
+        Map<String, String> normalized = new LinkedHashMap<>();
+        mapValue.forEach((key, headerValue) -> {
+            if (key != null && headerValue != null && StringUtils.hasText(String.valueOf(headerValue))) {
+                normalized.put(String.valueOf(key).trim(), String.valueOf(headerValue).trim());
+            }
+        });
+        return normalized.isEmpty() ? null : JSON.toJSONString(normalized);
+    }
+
     public Mono<Map<String, Object>> deleteTenant(String tenantId) {
         assertPersistenceEnabled();
         return tenantApiKeyRepository.deleteAllByTenantId(tenantId)
+                .then(providerCredentialRepository.deleteAllByTenantId(tenantId))
                 .then(tenantModelAllowedRepository.deleteAllByTenantId(tenantId))
                 .then(tenantModelMappingRepository.deleteAllByTenantId(tenantId))
                 .then(tenantQuotaPolicyRepository.deleteByTenantId(tenantId))
@@ -291,11 +454,30 @@ public class TenantConfigManagementService {
                 .thenReturn(Map.of("tenantId", tenantId, "appId", appId, "deleted", true));
     }
 
+    /**
+     * 删除平台 API Key。
+     * <p>
+     * 响应<b>不再回显被删的 Key</b>：这个 Map 会进响应体、日志与审计明细，
+     * 回显等于给"删掉的密钥"又发了一张副本。
+     */
     public Mono<Map<String, Object>> deleteApiKey(String apiKey) {
         assertPersistenceEnabled();
-        return tenantApiKeyRepository.deleteByApiKey(apiKey)
+        return deleteApiKeyRow(apiKey)
                 .then(tenantConfigQueryService.refreshFromDatabaseReactive())
-                .thenReturn(Map.of("apiKey", apiKey, "deleted", true));
+                .thenReturn(Map.of("deleted", true));
+    }
+
+    /**
+     * 按哈希删一次，再按明文删一次：前者覆盖已回填的行，后者覆盖迁移窗口内还没回填的行。
+     * 两边都删不到也不算失败（幂等）。
+     */
+    private Mono<Void> deleteApiKeyRow(String rawApiKey) {
+        String hash = secretHasher.hmac(rawApiKey);
+        if (hash == null) {
+            return tenantApiKeyRepository.deleteByApiKey(rawApiKey);
+        }
+        return tenantApiKeyRepository.deleteByApiKeyHash(hash)
+                .then(tenantApiKeyRepository.deleteByApiKey(rawApiKey));
     }
 
     public Mono<Map<String, Object>> deleteModelPolicy(String tenantId) {

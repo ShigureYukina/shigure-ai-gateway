@@ -9,9 +9,16 @@ public interface TenantApiKeyRepository extends ReactiveCrudRepository<TenantApi
 
     Mono<TenantApiKeyEntity> findByApiKey(String apiKey);
 
+    /**
+     * 配了主密钥时的查找入口（见 {@code crypto.SecretHasher}）：密文不固定，只能按确定性哈希查。
+     */
+    Mono<TenantApiKeyEntity> findByApiKeyHash(String apiKeyHash);
+
     Flux<TenantApiKeyEntity> findAllByTenantId(String tenantId);
 
     Mono<Void> deleteByApiKey(String apiKey);
+
+    Mono<Void> deleteByApiKeyHash(String apiKeyHash);
 
     Mono<Void> deleteAllByTenantId(String tenantId);
 }
