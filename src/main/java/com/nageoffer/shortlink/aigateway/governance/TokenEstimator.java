@@ -13,7 +13,7 @@ public class TokenEstimator {
 
     public TokenEstimateResult estimate(AiChatCompletionReqDTO request) {
         int chars = request.getMessages().stream()
-                .mapToInt(each -> each.getContent() == null ? 0 : each.getContent().length())
+                .mapToInt(each -> ContentTextExtractor.text(each.getContent()).length())
                 .sum();
         long inputEstimated = Math.max(1, chars / 4L);
         long outputReserve = request.getMaxTokens() != null

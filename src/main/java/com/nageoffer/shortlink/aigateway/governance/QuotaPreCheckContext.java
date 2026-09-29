@@ -9,6 +9,14 @@ public class QuotaPreCheckContext {
 
     private String quotaKey;
 
+    private String tenantId;
+
+    private String appId;
+
+    private String provider;
+
+    private String providerModel;
+
     private long reservedTokens;
 
     private long minuteQuota;

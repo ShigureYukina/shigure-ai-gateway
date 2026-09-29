@@ -92,9 +92,37 @@ public class RedisSemanticCacheService implements SemanticCacheService {
         String indexKey = buildIndexKey(provider, model);
         long now = System.currentTimeMillis();
 
+        String indexValue = toIndexedValue(contentHash, truncateForIndex(normalizedContent));
         stringRedisTemplate.opsForValue().set(exactCacheKey, response, ttl);
-        stringRedisTemplate.opsForZSet().add(indexKey, toIndexedValue(contentHash, normalizedContent), now);
+        stringRedisTemplate.opsForZSet().add(indexKey, indexValue, now);
         stringRedisTemplate.expire(indexKey, ttl);
+        trimIndex(indexKey);
+    }
+
+    /**
+     * 裁剪索引，避免 ZSet 随请求量无界增长。
+     * <p>
+     * 索引是按模型全量扫描做相似度比较的，条目数直接决定每次查找的代价，
+     * 因此必须给出上界，按写入时间淘汰最旧条目。
+     */
+    private void trimIndex(String indexKey) {
+        Integer maxEntries = properties.getCache().getSemanticIndexMaxEntries();
+        if (maxEntries == null || maxEntries <= 0) {
+            return;
+        }
+        Long size = stringRedisTemplate.opsForZSet().zCard(indexKey);
+        if (size == null || size <= maxEntries) {
+            return;
+        }
+        stringRedisTemplate.opsForZSet().removeRange(indexKey, 0, size - maxEntries - 1);
+    }
+
+    private String truncateForIndex(String content) {
+        Integer maxLength = properties.getCache().getSemanticIndexMaxContentLength();
+        if (maxLength == null || maxLength <= 0 || content.length() <= maxLength) {
+            return content;
+        }
+        return content.substring(0, maxLength);
     }
 
     private String normalizeContent(AiChatCompletionReqDTO request) {
@@ -106,6 +134,7 @@ public class RedisSemanticCacheService implements SemanticCacheService {
                 .filter(message -> "user".equalsIgnoreCase(message.getRole()))
                 .map(AiChatCompletionMessage::getContent)
                 .filter(Objects::nonNull)
+                .map(ContentTextExtractor::text)
                 .map(String::trim)
                 .filter(content -> !content.isBlank())
                 .map(content -> content.toLowerCase().replaceAll("\\s+", " "))

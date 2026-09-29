@@ -12,6 +12,17 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.LongAdder;
 
+/**
+ * 缓存命中统计（进程内快照）。
+ * <p>
+ * 定位：<b>本实例</b>的实时计数与分钟趋势，重启清零、多实例各自独立。因此它适合"看这台机器的
+ * 缓存是否在起作用、刚改完配置有没有变化"，不适合当作跨实例的汇总口径。
+ * <p>
+ * 跨实例的汇聚口径在 Redis 里（租户维度 hash 的 {@code cacheHit}/{@code cacheMiss}/{@code cacheWrite}，
+ * 字段名由 {@code AiGatewayMetricsKeys} 约定）。两者数值本来就不会相等，但<b>必须对"什么算命中"用同一个定义</b>：
+ * 精确命中与语义命中都算命中。所以这里的 {@code hitRate} 分子分母都含语义命中——
+ * 只把精确命中算作命中，会得到明显低于 Redis 侧 {@code cacheHit} 的命中率，两个数摆在同一个控制台上就是自相矛盾。
+ */
 @Component
 public class AiCacheStatsService {
 
@@ -51,15 +62,14 @@ public class AiCacheStatsService {
     public Map<String, Object> snapshot() {
         long hitValue = hit.sum();
         long missValue = miss.sum();
-        long totalLookup = hitValue + missValue;
-        double hitRate = totalLookup == 0 ? 0D : (double) hitValue / totalLookup;
+        long semanticHitValue = semanticHit.sum();
         return Map.of(
                 "hit", hitValue,
                 "miss", missValue,
-                "semanticHit", semanticHit.sum(),
+                "semanticHit", semanticHitValue,
                 "write", write.sum(),
-                "totalLookup", totalLookup,
-                "hitRate", hitRate
+                "totalLookup", totalLookup(hitValue, semanticHitValue, missValue),
+                "hitRate", hitRate(hitValue, semanticHitValue, missValue)
         );
     }
 
@@ -71,18 +81,32 @@ public class AiCacheStatsService {
             BucketCounter bucket = minuteBuckets.get(i);
             long hitValue = bucket == null ? 0L : bucket.hit.sum();
             long missValue = bucket == null ? 0L : bucket.miss.sum();
-            long totalLookup = hitValue + missValue;
-            double hitRate = totalLookup == 0 ? 0D : (double) hitValue / totalLookup;
+            long semanticHitValue = bucket == null ? 0L : bucket.semanticHit.sum();
             result.add(Map.of(
                     "minute", formatMinute(i),
                     "hit", hitValue,
                     "miss", missValue,
-                    "semanticHit", bucket == null ? 0L : bucket.semanticHit.sum(),
+                    "semanticHit", semanticHitValue,
                     "write", bucket == null ? 0L : bucket.write.sum(),
-                    "hitRate", hitRate
+                    "hitRate", hitRate(hitValue, semanticHitValue, missValue)
             ));
         }
         return result.stream().sorted(Comparator.comparing(each -> String.valueOf(each.get("minute")))).toList();
+    }
+
+    /**
+     * 一次缓存查找的三种归宿：精确命中、语义命中、未命中。三者之和才是分母。
+     */
+    private long totalLookup(long hitValue, long semanticHitValue, long missValue) {
+        return hitValue + semanticHitValue + missValue;
+    }
+
+    private double hitRate(long hitValue, long semanticHitValue, long missValue) {
+        long totalLookup = totalLookup(hitValue, semanticHitValue, missValue);
+        if (totalLookup == 0) {
+            return 0D;
+        }
+        return (double) (hitValue + semanticHitValue) / totalLookup;
     }
 
     public Map<String, Object> reset() {

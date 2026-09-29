@@ -26,6 +26,15 @@ public class AiSafetyGuard {
     private final AiGatewayProperties properties;
 
     /**
+     * 输入内容安全校验（多模态内容按文本片段逐段校验）。
+     */
+    public void verifyInput(Object content) {
+        for (String text : ContentTextExtractor.texts(content)) {
+            verifyInput(text);
+        }
+    }
+
+    /**
      * 输入内容安全校验。
      */
     public void verifyInput(String content) {

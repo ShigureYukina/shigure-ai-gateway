@@ -1,6 +1,7 @@
 package com.nageoffer.shortlink.aigateway.governance;
 
 import com.nageoffer.shortlink.aigateway.config.AiGatewayProperties;
+import com.nageoffer.shortlink.aigateway.config.AiGatewayTenantProperties;
 import com.nageoffer.shortlink.aigateway.dto.req.AiChatCompletionReqDTO;
 import com.nageoffer.shortlink.aigateway.exception.AiGatewayClientException;
 import com.nageoffer.shortlink.aigateway.exception.AiGatewayErrorCode;
@@ -123,6 +124,33 @@ public class RedisTokenQuotaService {
             return 1
             """, Long.class);
 
+    /**
+     * 结算脚本：按实际用量与预扣的差值补扣或返还，并回传三个窗口的结算后用量。
+     * <p>
+     * 合并成一次往返的原因：结算处在每请求终态，原先"差额为正时发三条 INCRBY"会带来
+     * 额外三次 RTT；同时回传结算后用量，才能对外给出可信的限流剩余量响应头。
+     */
+    private static final DefaultRedisScript<List> QUOTA_SETTLE_SCRIPT = new DefaultRedisScript<>("""
+            local delta = tonumber(ARGV[1])
+            local function apply(key)
+                local current = tonumber(redis.call('GET', key) or '0')
+                local ttl = redis.call('TTL', key)
+                local updated = current + delta
+                if updated < 0 then
+                    updated = 0
+                end
+                if ttl > 0 then
+                    redis.call('SET', key, updated, 'EX', ttl)
+                elseif ttl == -1 then
+                    redis.call('SET', key, updated)
+                elseif updated > 0 then
+                    redis.call('SET', key, updated)
+                end
+                return updated
+            end
+            return {apply(KEYS[1]), apply(KEYS[2]), apply(KEYS[3])}
+            """, List.class);
+
     private final ReactiveStringRedisTemplate reactiveStringRedisTemplate;
 
     private final TokenEstimator tokenEstimator;
@@ -202,6 +230,10 @@ public class RedisTokenQuotaService {
                     metricsRecorder.recordTenantQuotaEvent(tenantIdOf(tenantContext), appIdOf(tenantContext), provider, providerModel, "reserve", reserve);
                     return Mono.just(QuotaPreCheckContext.builder()
                             .quotaKey(quotaKey)
+                            .tenantId(tenantIdOf(tenantContext))
+                            .appId(appIdOf(tenantContext))
+                            .provider(provider)
+                            .providerModel(providerModel)
                             .reservedTokens(reserve)
                             .minuteQuota(minuteQuota)
                             .dayQuota(dayQuota)
@@ -215,8 +247,10 @@ public class RedisTokenQuotaService {
 
     /**
      * 按实际用量结算配额：多用则补扣，少用则按差额返还。
+     * <p>
+     * 返回结算后各窗口的用量，供响应头与观测使用。
      */
-    public Mono<Void> adjustByActualUsage(QuotaPreCheckContext context, long actualTotalTokens) {
+    public Mono<QuotaSettleResult> adjustByActualUsage(QuotaPreCheckContext context, long actualTotalTokens) {
         if (context == null || context.getReservedTokens() <= 0 || actualTotalTokens <= 0) {
             return Mono.empty();
         }
@@ -224,15 +258,55 @@ public class RedisTokenQuotaService {
         if (diff == 0) {
             return Mono.empty();
         }
-        if (diff > 0) {
-            return reactiveStringRedisTemplate.opsForValue().increment(context.getMinuteKey(), diff)
-                    .then(reactiveStringRedisTemplate.opsForValue().increment(context.getDayKey(), diff))
-                    .then(reactiveStringRedisTemplate.opsForValue().increment(context.getMonthKey(), diff))
-                    .then();
+        return reactiveStringRedisTemplate.execute(QUOTA_SETTLE_SCRIPT,
+                        List.of(context.getMinuteKey(), context.getDayKey(), context.getMonthKey()),
+                        List.of(String.valueOf(diff)))
+                .next()
+                .map(this::toSettleResult);
+    }
+
+    @SuppressWarnings("unchecked")
+    private QuotaSettleResult toSettleResult(Object scriptResult) {
+        if (!(scriptResult instanceof List<?> values) || values.size() < 3) {
+            return null;
         }
+        List<Object> numbers = (List<Object>) values;
+        return new QuotaSettleResult(parseLongOrZero(numbers.get(0)), parseLongOrZero(numbers.get(1)), parseLongOrZero(numbers.get(2)));
+    }
+
+    private long parseLongOrZero(Object value) {
+        if (value == null) {
+            return 0L;
+        }
+        try {
+            return Long.parseLong(String.valueOf(value));
+        } catch (NumberFormatException ex) {
+            return 0L;
+        }
+    }
+
+    /**
+     * 配额结算结果：三个窗口在结算后的实际用量。
+     */
+    public record QuotaSettleResult(long minuteUsed, long dayUsed, long monthUsed) {
+    }
+
+    /**
+     * 释放预扣配额。
+     * <p>
+     * 请求失败或客户端取消时，上游没有可采信的实际用量，必须把预扣额度还回去；
+     * 否则失败请求会永久占用配额，把租户的可用额度慢慢吃掉。
+     */
+    public Mono<Void> release(QuotaPreCheckContext context) {
+        if (context == null || context.getReservedTokens() <= 0) {
+            return Mono.empty();
+        }
+        metricsRecorder.recordTenantQuotaEvent(tenantIdOf(context), appIdOf(context), context.getProvider(),
+                context.getProviderModel(), "release", context.getReservedTokens());
         return reactiveStringRedisTemplate.execute(QUOTA_COMPENSATION_SCRIPT,
-                List.of(context.getMinuteKey(), context.getDayKey(), context.getMonthKey()),
-                List.of(String.valueOf(-diff))).then();
+                        List.of(context.getMinuteKey(), context.getDayKey(), context.getMonthKey()),
+                        List.of(String.valueOf(context.getReservedTokens())))
+                .then();
     }
 
     public Mono<Map<String, Object>> currentUsage(HttpHeaders headers, String provider, String providerModel) {
@@ -284,7 +358,7 @@ public class RedisTokenQuotaService {
         if (tenantContext == null) {
             return new TenantQuotaConfig(minuteQuota, dayQuota, monthQuota);
         }
-        AiGatewayProperties.TenantQuotaPolicy quotaPolicy = tenantConfigQueryService.findQuotaPolicy(tenantContext.tenantId()).orElse(null);
+        AiGatewayTenantProperties.TenantQuotaPolicy quotaPolicy = tenantConfigQueryService.findQuotaPolicy(tenantContext.tenantId()).orElse(null);
         if (quotaPolicy == null || !quotaPolicy.isEnabled()) {
             return new TenantQuotaConfig(minuteQuota, dayQuota, monthQuota);
         }
@@ -308,6 +382,14 @@ public class RedisTokenQuotaService {
 
     private String tenantIdOf(TenantContext tenantContext) {
         return tenantContext == null ? properties.getTenant().getDefaultTenantId() : tenantContext.tenantId();
+    }
+
+    private String tenantIdOf(QuotaPreCheckContext context) {
+        return context.getTenantId() == null ? properties.getTenant().getDefaultTenantId() : context.getTenantId();
+    }
+
+    private String appIdOf(QuotaPreCheckContext context) {
+        return context.getAppId() == null ? properties.getTenant().getDefaultAppId() : context.getAppId();
     }
 
     private String appIdOf(TenantContext tenantContext) {

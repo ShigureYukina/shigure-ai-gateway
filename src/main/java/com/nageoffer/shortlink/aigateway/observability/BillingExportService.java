@@ -7,15 +7,12 @@ import org.springframework.stereotype.Service;
 
 import java.time.LocalDate;
 import java.time.ZoneId;
-import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 
 @Service
 @RequiredArgsConstructor
 public class BillingExportService {
-
-    private static final String CALL_KEY_PREFIX = "short-link:ai-gateway:call:";
 
     private final StringRedisTemplate stringRedisTemplate;
 
@@ -26,7 +23,7 @@ public class BillingExportService {
         List<AiCallRecord> records = new ArrayList<>();
         LocalDate cursor = startDate;
         while (!cursor.isAfter(endDate)) {
-            String key = CALL_KEY_PREFIX + cursor.format(DateTimeFormatter.BASIC_ISO_DATE);
+            String key = AiGatewayMetricsKeys.callKey(cursor);
             List<String> rows = stringRedisTemplate.opsForList().range(key, 0, -1);
             if (rows != null) {
                 for (String row : rows) {

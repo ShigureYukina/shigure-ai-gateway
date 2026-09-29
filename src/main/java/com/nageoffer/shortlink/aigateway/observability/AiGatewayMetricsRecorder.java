@@ -18,10 +18,7 @@ import org.springframework.stereotype.Component;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
-import java.time.Duration;
 import java.time.LocalDate;
-import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
@@ -31,23 +28,15 @@ import java.util.concurrent.TimeUnit;
 @RequiredArgsConstructor
 public class AiGatewayMetricsRecorder {
 
-    private static final String CALL_KEY_PREFIX = "short-link:ai-gateway:call:";
-
-    private static final String METRIC_KEY_PREFIX = "short-link:ai-gateway:metric:model:";
-
-    private static final String TENANT_METRIC_KEY_PREFIX = "short-link:ai-gateway:metric:tenant:";
-
-    private static final String LATENCY_KEY_PREFIX = "short-link:ai-gateway:metric:latency:";
-
-    private static final long METRIC_TTL_SECONDS = Duration.ofDays(2).toSeconds();
-
-    private static final long CALL_TTL_SECONDS = Duration.ofDays(7).toSeconds();
-
     /**
      * 单次往返完成调用明细与聚合指标的写入。
      * <p>
      * 之所以把所有写入合并进一个 Lua 脚本，是因为该逻辑位于每请求的响应终态：
      * 逐条命令会产生十余次往返，一旦在事件循环上执行就会成为吞吐瓶颈。
+     * <p>
+     * 脚本里的 hash 字段名必须与 {@link AiGatewayMetricsKeys} 里的常量一致——健康分用同步命令读写同一个
+     * hash，字段名漂移不会报错，只会让健康分读到 0。改字段名时同步改常量，并由
+     * {@code AiGatewayMetricsKeysTest} 断言两者不脱节。
      */
     private static final DefaultRedisScript<Long> CALL_RECORD_SCRIPT = new DefaultRedisScript<>("""
             redis.call('HINCRBY', KEYS[1], 'calls', 1)
@@ -94,6 +83,8 @@ public class AiGatewayMetricsRecorder {
         if (callRecord == null) {
             return;
         }
+        // cost 缺省时补算：provider 健康分侧（ProviderHealthScoreService）会独立估一次同样的成本，
+        // 两边写的是不同 Redis 键（那边是 provider:model 复合键，这里是 model 键），刻意不互相传值。
         if (callRecord.getCost() == null) {
             long tokenIn = callRecord.getTokenIn() == null ? 0L : callRecord.getTokenIn();
             long tokenOut = callRecord.getTokenOut() == null ? 0L : callRecord.getTokenOut();
@@ -103,19 +94,19 @@ public class AiGatewayMetricsRecorder {
             callRecord.setTimestamp(System.currentTimeMillis());
         }
 
-        String day = LocalDate.now().format(DateTimeFormatter.BASIC_ISO_DATE);
-        String hour = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMddHH"));
-        String callKey = CALL_KEY_PREFIX + day;
-        String metricKey = METRIC_KEY_PREFIX + callRecord.getModel() + ":" + hour;
-        String tenantMetricKey = TENANT_METRIC_KEY_PREFIX + safe(callRecord.getTenantId()) + ":" + hour;
-        String latencyKey = LATENCY_KEY_PREFIX + callRecord.getModel() + ":" + hour;
+        String hour = AiGatewayMetricsKeys.currentHour();
+        String callKey = AiGatewayMetricsKeys.callKey(LocalDate.now());
+        String metricKey = AiGatewayMetricsKeys.modelMetricKey(callRecord.getModel(), hour);
+        String tenantMetricKey = AiGatewayMetricsKeys.tenantMetricKey(callRecord.getTenantId(), hour);
+        String latencyKey = AiGatewayMetricsKeys.latencyKey(callRecord.getModel(), hour);
 
         boolean success = callRecord.getStatus() != null && callRecord.getStatus() < 400;
         long tokenIn = callRecord.getTokenIn() == null ? 0L : callRecord.getTokenIn();
         long tokenOut = callRecord.getTokenOut() == null ? 0L : callRecord.getTokenOut();
         double cost = callRecord.getCost() == null ? 0D : callRecord.getCost();
         long latency = callRecord.getLatencyMillis() == null ? 0L : callRecord.getLatencyMillis();
-        String latencyMember = callRecord.getRequestId() + ":" + System.currentTimeMillis();
+        String latencyMember = AiGatewayMetricsKeys.latencyMember(
+                String.valueOf(callRecord.getRequestId()), System.currentTimeMillis());
 
         List<String> keys = List.of(metricKey, tenantMetricKey, latencyKey, callKey);
         List<String> args = List.of(
@@ -123,12 +114,12 @@ public class AiGatewayMetricsRecorder {
                 String.valueOf(tokenIn),
                 String.valueOf(tokenOut),
                 String.valueOf(cost),
-                String.valueOf(METRIC_TTL_SECONDS),
+                String.valueOf(AiGatewayMetricsKeys.METRIC_TTL.toSeconds()),
                 Boolean.TRUE.equals(callRecord.getCacheHit()) ? "1" : "0",
                 String.valueOf(latency),
                 latencyMember,
                 JSON.toJSONString(callRecord),
-                String.valueOf(CALL_TTL_SECONDS));
+                String.valueOf(AiGatewayMetricsKeys.CALL_TTL.toSeconds()));
 
         recordCallReactive(keys, args)
                 .subscribe(ignored -> {
@@ -145,21 +136,19 @@ public class AiGatewayMetricsRecorder {
         return reactiveStringRedisTemplate.execute(CALL_RECORD_SCRIPT, keys, args);
     }
 
+    /**
+     * 暴露给测试的脚本文本：用于断言脚本里的字段名与 {@link AiGatewayMetricsKeys} 常量一致。
+     */
+    static String callRecordScriptText() {
+        return CALL_RECORD_SCRIPT.getScriptAsString();
+    }
+
     public void recordTenantCacheEvent(String tenantId, String eventType) {
-        if (eventType == null || eventType.isBlank()) {
-            return;
-        }
-        String hour = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMddHH"));
-        String tenantMetricKey = TENANT_METRIC_KEY_PREFIX + safe(tenantId) + ":" + hour;
-        String counterField = switch (eventType) {
-            case "hit" -> "cacheHit";
-            case "miss" -> "cacheMiss";
-            case "write" -> "cacheWrite";
-            default -> null;
-        };
+        String counterField = AiGatewayMetricsKeys.cacheEventField(eventType);
         if (counterField == null) {
             return;
         }
+        String tenantMetricKey = AiGatewayMetricsKeys.tenantMetricKey(tenantId, AiGatewayMetricsKeys.currentHour());
 
         recordTenantCacheEventReactive(tenantMetricKey, counterField)
                 .subscribe(ignored -> {
@@ -168,7 +157,7 @@ public class AiGatewayMetricsRecorder {
         if (properties.getObservability().isTenantMetricsEnabled() && properties.getObservability().isCacheEventMetricsEnabled()) {
             meterRegistry.counter("ai_gateway_tenant_cache_events_total",
                     List.of(
-                            Tag.of("tenant", safe(tenantId)),
+                            Tag.of("tenant", AiGatewayMetricsKeys.safe(tenantId)),
                             Tag.of("event", counterField)
                     )).increment();
         }
@@ -177,7 +166,7 @@ public class AiGatewayMetricsRecorder {
     Flux<Long> recordTenantCacheEventReactive(String tenantMetricKey, String counterField) {
         return reactiveStringRedisTemplate.execute(TENANT_CACHE_EVENT_SCRIPT,
                 List.of(tenantMetricKey),
-                List.of(counterField, String.valueOf(METRIC_TTL_SECONDS)));
+                List.of(counterField, String.valueOf(AiGatewayMetricsKeys.METRIC_TTL.toSeconds())));
     }
 
     public void recordTenantQuotaEvent(String tenantId, String appId, String provider, String model, String eventType, long tokens) {
@@ -189,20 +178,20 @@ public class AiGatewayMetricsRecorder {
         }
         meterRegistry.counter("ai_gateway_tenant_quota_events_total",
                 List.of(
-                        Tag.of("tenant", safe(tenantId)),
-                        Tag.of("app", safe(appId)),
-                        Tag.of("provider", safe(provider)),
-                        Tag.of("model", safe(model)),
-                        Tag.of("event", safe(eventType))
+                        Tag.of("tenant", AiGatewayMetricsKeys.safe(tenantId)),
+                        Tag.of("app", AiGatewayMetricsKeys.safe(appId)),
+                        Tag.of("provider", AiGatewayMetricsKeys.safe(provider)),
+                        Tag.of("model", AiGatewayMetricsKeys.safe(model)),
+                        Tag.of("event", AiGatewayMetricsKeys.safe(eventType))
                 )).increment();
         if (tokens > 0) {
             DistributionSummary.builder("ai_gateway_tenant_quota_tokens")
                     .tags(
-                            "tenant", safe(tenantId),
-                            "app", safe(appId),
-                            "provider", safe(provider),
-                            "model", safe(model),
-                            "event", safe(eventType)
+                            "tenant", AiGatewayMetricsKeys.safe(tenantId),
+                            "app", AiGatewayMetricsKeys.safe(appId),
+                            "provider", AiGatewayMetricsKeys.safe(provider),
+                            "model", AiGatewayMetricsKeys.safe(model),
+                            "event", AiGatewayMetricsKeys.safe(eventType)
                     )
                     .register(meterRegistry)
                     .record(tokens);
@@ -210,24 +199,24 @@ public class AiGatewayMetricsRecorder {
     }
 
     public Mono<ModelMetricsSnapshot> currentHourSnapshot(String model) {
-        String hour = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMddHH"));
-        String metricKey = METRIC_KEY_PREFIX + model + ":" + hour;
-        String latencyKey = LATENCY_KEY_PREFIX + model + ":" + hour;
+        String hour = AiGatewayMetricsKeys.currentHour();
+        String metricKey = AiGatewayMetricsKeys.modelMetricKey(model, hour);
+        String latencyKey = AiGatewayMetricsKeys.latencyKey(model, hour);
 
         Mono<Map<String, String>> metricHash = readHash(metricKey);
         Mono<Long> p95Latency = resolveP95Reactive(latencyKey);
 
         return Mono.zip(metricHash, p95Latency).map(tuple -> {
             Map<String, String> metrics = tuple.getT1();
-            long callCount = toLong(metrics.get("calls"));
-            long successCount = toLong(metrics.get("success"));
+            long callCount = toLong(metrics.get(AiGatewayMetricsKeys.FIELD_CALLS));
+            long successCount = toLong(metrics.get(AiGatewayMetricsKeys.FIELD_SUCCESS));
             double successRate = callCount == 0 ? 0D : successCount * 1.0D / callCount;
             return ModelMetricsSnapshot.builder()
                     .model(model)
                     .callCount(callCount)
                     .successRate(successRate)
                     .p95LatencyMillis(tuple.getT2())
-                    .totalCost(toDouble(metrics.get("cost")))
+                    .totalCost(toDouble(metrics.get(AiGatewayMetricsKeys.FIELD_COST)))
                     .build();
         });
     }
@@ -283,18 +272,14 @@ public class AiGatewayMetricsRecorder {
         }
     }
 
-    private String safe(String value) {
-        return value == null || value.isBlank() ? "unknown" : value;
-    }
-
     private void recordPrometheusMetrics(AiCallRecord callRecord) {
         if (!properties.getObservability().isTenantMetricsEnabled()) {
             return;
         }
-        String tenant = safe(callRecord.getTenantId());
-        String app = safe(callRecord.getAppId());
-        String provider = safe(callRecord.getProvider());
-        String model = safe(callRecord.getModel());
+        String tenant = AiGatewayMetricsKeys.safe(callRecord.getTenantId());
+        String app = AiGatewayMetricsKeys.safe(callRecord.getAppId());
+        String provider = AiGatewayMetricsKeys.safe(callRecord.getProvider());
+        String model = AiGatewayMetricsKeys.safe(callRecord.getModel());
         String statusClass = statusClass(callRecord.getStatus());
         String result = callRecord.getStatus() != null && callRecord.getStatus() < 400 ? "success" : "error";
 
