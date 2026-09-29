@@ -1,6 +1,7 @@
 package com.nageoffer.shortlink.aigateway.security;
 
 import com.nageoffer.shortlink.aigateway.config.AiGatewayProperties;
+import com.nageoffer.shortlink.aigateway.config.AiGatewayTenantProperties;
 import com.nageoffer.shortlink.aigateway.exception.AiGatewayClientException;
 import com.nageoffer.shortlink.aigateway.exception.AiGatewayErrorCode;
 import com.nageoffer.shortlink.aigateway.persistence.service.TenantConfigQueryService;
@@ -58,7 +59,7 @@ class ApiKeyAuthServiceTest {
     void shouldPreferDatabaseCredentialWhenAvailable() {
         AiGatewayProperties properties = baseProperties(true);
         TenantConfigQueryService queryService = Mockito.mock(TenantConfigQueryService.class);
-        AiGatewayProperties.TenantApiKeyCredential dbCredential = new AiGatewayProperties.TenantApiKeyCredential();
+        AiGatewayTenantProperties.TenantApiKeyCredential dbCredential = new AiGatewayTenantProperties.TenantApiKeyCredential();
         dbCredential.setApiKey("db-secret");
         dbCredential.setTenantId("tenant-db");
         dbCredential.setAppId("app-db");
@@ -103,7 +104,7 @@ class ApiKeyAuthServiceTest {
         Assertions.assertEquals(AiGatewayErrorCode.UNAUTHORIZED, expiredKey.getErrorCode());
 
         AiGatewayProperties unmappedProperties = baseProperties(true);
-        AiGatewayProperties.TenantApiKeyCredential missingTenantCredential = new AiGatewayProperties.TenantApiKeyCredential();
+        AiGatewayTenantProperties.TenantApiKeyCredential missingTenantCredential = new AiGatewayTenantProperties.TenantApiKeyCredential();
         missingTenantCredential.setApiKey("missing-tenant-secret");
         missingTenantCredential.setTenantId("");
         missingTenantCredential.setAppId("app-z");
@@ -124,26 +125,26 @@ class ApiKeyAuthServiceTest {
         properties.getTenant().setDefaultAppId("default-app");
         properties.getTenant().setDefaultKeyId("default-key");
 
-        AiGatewayProperties.TenantApiKeyCredential activeCredential = new AiGatewayProperties.TenantApiKeyCredential();
+        AiGatewayTenantProperties.TenantApiKeyCredential activeCredential = new AiGatewayTenantProperties.TenantApiKeyCredential();
         activeCredential.setApiKey("tenant-secret");
         activeCredential.setTenantId("tenant-a");
         activeCredential.setAppId("app-a");
         activeCredential.setKeyId("key-a");
 
-        AiGatewayProperties.TenantApiKeyCredential headerCredential = new AiGatewayProperties.TenantApiKeyCredential();
+        AiGatewayTenantProperties.TenantApiKeyCredential headerCredential = new AiGatewayTenantProperties.TenantApiKeyCredential();
         headerCredential.setApiKey("header-secret");
         headerCredential.setTenantId("tenant-b");
         headerCredential.setAppId("app-b");
         headerCredential.setKeyId("key-b");
 
-        AiGatewayProperties.TenantApiKeyCredential disabledCredential = new AiGatewayProperties.TenantApiKeyCredential();
+        AiGatewayTenantProperties.TenantApiKeyCredential disabledCredential = new AiGatewayTenantProperties.TenantApiKeyCredential();
         disabledCredential.setApiKey("disabled-secret");
         disabledCredential.setTenantId("tenant-c");
         disabledCredential.setAppId("app-c");
         disabledCredential.setKeyId("key-c");
         disabledCredential.setEnabled(false);
 
-        AiGatewayProperties.TenantApiKeyCredential expiredCredential = new AiGatewayProperties.TenantApiKeyCredential();
+        AiGatewayTenantProperties.TenantApiKeyCredential expiredCredential = new AiGatewayTenantProperties.TenantApiKeyCredential();
         expiredCredential.setApiKey("expired-secret");
         expiredCredential.setTenantId("tenant-d");
         expiredCredential.setAppId("app-d");

@@ -1,6 +1,7 @@
 package com.nageoffer.shortlink.aigateway.service;
 
 import com.nageoffer.shortlink.aigateway.adapter.ProviderAdapter;
+import com.nageoffer.shortlink.aigateway.governance.ProviderRateLimitService;
 import com.nageoffer.shortlink.aigateway.config.AiGatewayProperties;
 import com.nageoffer.shortlink.aigateway.config.AiGatewayTracer;
 import com.nageoffer.shortlink.aigateway.dto.req.AiChatCompletionMessage;
@@ -14,16 +15,22 @@ import com.nageoffer.shortlink.aigateway.governance.QuotaPreCheckContext;
 import com.nageoffer.shortlink.aigateway.governance.RedisResponseCacheService;
 import com.nageoffer.shortlink.aigateway.governance.RedisTokenQuotaService;
 import com.nageoffer.shortlink.aigateway.governance.UsageDetail;
+import com.nageoffer.shortlink.aigateway.governance.RateLimitHeaderService;
+import com.nageoffer.shortlink.aigateway.governance.UpstreamCredentialService;
 import com.nageoffer.shortlink.aigateway.governance.UsageExtractor;
 import com.nageoffer.shortlink.aigateway.exception.AiGatewayClientException;
 import com.nageoffer.shortlink.aigateway.exception.AiGatewayErrorCode;
 import com.nageoffer.shortlink.aigateway.observability.AiCallRecord;
+import com.nageoffer.shortlink.aigateway.observability.AiRequestTraceBus;
+import com.nageoffer.shortlink.aigateway.observability.AiRequestTraceEvent;
 import com.nageoffer.shortlink.aigateway.observability.AiGatewayMetricsRecorder;
+import com.nageoffer.shortlink.aigateway.observability.RequestTracePublisher;
 import com.nageoffer.shortlink.aigateway.plugin.PluginChainService;
 import com.nageoffer.shortlink.aigateway.plugin.PluginResponseContext;
 import com.nageoffer.shortlink.aigateway.routing.AiRoutePolicy;
 import com.nageoffer.shortlink.aigateway.routing.AiRoutingResult;
 import com.nageoffer.shortlink.aigateway.routing.ProviderRoutingService;
+import com.nageoffer.shortlink.aigateway.routing.RoutingPlanResolver;
 import com.nageoffer.shortlink.aigateway.tenant.TenantContext;
 import com.nageoffer.shortlink.aigateway.tenant.TenantModelPolicyService;
 import org.junit.jupiter.api.Assertions;
@@ -42,6 +49,7 @@ import reactor.test.StepVerifier;
 
 import java.time.Duration;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 
 class AiGatewayServiceUsageRecordTest {
@@ -91,13 +99,23 @@ class AiGatewayServiceUsageRecordTest {
         Mockito.when(circuitBreaker.run(Mockito.any(Mono.class), Mockito.any())).thenAnswer(invocation -> invocation.getArgument(0));
 
         AiGatewayProperties properties = new AiGatewayProperties();
-        AiGatewayService service = new AiGatewayService(
+        AiRequestTraceBus requestTraceBus = Mockito.mock(AiRequestTraceBus.class);
+        RequestTracePublisher tracePublisher = new RequestTracePublisher(requestTraceBus);
+        UpstreamCallExecutor upstreamCallExecutor = new UpstreamCallExecutor(
                 WebClient.builder().exchangeFunction(successExchangeFunction("upstream-body")).build(),
-                providerRoutingService,
-                tenantModelPolicyService,
                 List.of(providerAdapter),
-                metricsRecorder,
+                circuitBreakerFactory,
+                Mockito.mock(UpstreamCredentialService.class),
+                pluginChainService,
                 aiSafetyGuard,
+                new ProviderRateLimitService(properties),
+                providerRoutingService,
+                properties,
+                tracePublisher
+        );
+        AiGatewayService service = new AiGatewayService(
+                new RoutingPlanResolver(properties, providerRoutingService, tenantModelPolicyService),
+                metricsRecorder,
                 redisTokenQuotaService,
                 usageExtractor,
                 aiCacheControlService,
@@ -105,10 +123,11 @@ class AiGatewayServiceUsageRecordTest {
                 aiCacheStatsService,
                 redisResponseCacheService,
                 Mockito.mock(NoopSemanticCacheService.class),
-                pluginChainService,
                 properties,
-                circuitBreakerFactory,
-                Mockito.mock(AiGatewayTracer.class)
+                Mockito.mock(AiGatewayTracer.class),
+                new RateLimitHeaderService(),
+                tracePublisher,
+                upstreamCallExecutor
         );
 
         String body = service.chatCompletion(request(), new HttpHeaders(), new TenantContext("tenant-a", "app-a", "key-a")).block();
@@ -125,6 +144,18 @@ class AiGatewayServiceUsageRecordTest {
         Assertions.assertEquals(12L, captor.getValue().getTokenIn());
         Assertions.assertEquals(18L, captor.getValue().getTokenOut());
         Assertions.assertEquals(Boolean.FALSE, captor.getValue().getCacheHit());
+        // 成功结果回灌健康分，token 用量用于估算成本
+        Mockito.verify(providerRoutingService).recordProviderOutcome(eq("openai"), eq("gpt-4o-mini"),
+                Mockito.anyLong(), eq(true), eq(12L), eq(18L));
+
+        // 实时链路的阶段埋点要齐：否则看板上会出现"黑洞"段落
+        ArgumentCaptor<AiRequestTraceEvent> traceCaptor = ArgumentCaptor.forClass(AiRequestTraceEvent.class);
+        Mockito.verify(requestTraceBus, Mockito.atLeastOnce()).publish(traceCaptor.capture());
+        List<String> stages = traceCaptor.getAllValues().stream().map(AiRequestTraceEvent::getStage).distinct().toList();
+        Assertions.assertTrue(stages.containsAll(List.of("routing", "cache", "quota", "upstream", "completed")),
+                "缺少阶段: " + stages);
+        Mockito.verify(requestTraceBus).publish(Mockito.argThat(event ->
+                "cache".equals(event.getStage()) && "miss".equals(event.getStatus())));
     }
 
     @Test
@@ -169,13 +200,23 @@ class AiGatewayServiceUsageRecordTest {
         Mockito.when(circuitBreakerFactory.create(Mockito.anyString())).thenReturn(circuitBreaker);
         Mockito.when(circuitBreaker.run(Mockito.any(Mono.class), Mockito.any())).thenAnswer(invocation -> invocation.getArgument(0));
 
-        AiGatewayService service = new AiGatewayService(
+        AiGatewayProperties gatewayProperties = new AiGatewayProperties();
+        RequestTracePublisher tracePublisher = new RequestTracePublisher(Mockito.mock(AiRequestTraceBus.class));
+        UpstreamCallExecutor upstreamCallExecutor = new UpstreamCallExecutor(
                 WebClient.builder().exchangeFunction(fallbackExchangeFunction()).build(),
-                providerRoutingService,
-                tenantModelPolicyService,
                 List.of(openaiAdapter, claudeAdapter),
-                metricsRecorder,
+                circuitBreakerFactory,
+                Mockito.mock(UpstreamCredentialService.class),
+                pluginChainService,
                 aiSafetyGuard,
+                new ProviderRateLimitService(gatewayProperties),
+                providerRoutingService,
+                gatewayProperties,
+                tracePublisher
+        );
+        AiGatewayService service = new AiGatewayService(
+                new RoutingPlanResolver(gatewayProperties, providerRoutingService, tenantModelPolicyService),
+                metricsRecorder,
                 redisTokenQuotaService,
                 usageExtractor,
                 Mockito.mock(AiCacheControlService.class),
@@ -183,10 +224,11 @@ class AiGatewayServiceUsageRecordTest {
                 Mockito.mock(AiCacheStatsService.class),
                 mockResponseCache(),
                 Mockito.mock(NoopSemanticCacheService.class),
-                pluginChainService,
-                new AiGatewayProperties(),
-                circuitBreakerFactory,
-                Mockito.mock(AiGatewayTracer.class)
+                gatewayProperties,
+                Mockito.mock(AiGatewayTracer.class),
+                new RateLimitHeaderService(),
+                tracePublisher,
+                upstreamCallExecutor
         );
 
         String body = service.chatCompletion(request(), new HttpHeaders(), new TenantContext("tenant-a", "app-a", "key-a")).block();
@@ -196,6 +238,11 @@ class AiGatewayServiceUsageRecordTest {
         Mockito.verify(metricsRecorder).recordCall(captor.capture());
         Assertions.assertEquals("claude", captor.getValue().getProvider());
         Assertions.assertEquals("gpt-4o-mini", captor.getValue().getModel());
+        // 主通道失败与备通道成功各上报一次：只报最终结果的话，失败的通道永远拿不到差评
+        Mockito.verify(providerRoutingService).recordProviderOutcome(eq("openai"), eq("gpt-4o-mini"),
+                Mockito.anyLong(), eq(false), eq(0L), eq(0L));
+        Mockito.verify(providerRoutingService).recordProviderOutcome(eq("claude"), eq("gpt-4o-mini"),
+                Mockito.anyLong(), eq(true), eq(0L), eq(0L));
     }
 
     @Test
@@ -214,13 +261,23 @@ class AiGatewayServiceUsageRecordTest {
         Mockito.when(aiCacheKeyService.build(Mockito.any(), Mockito.anyString(), Mockito.anyString(), Mockito.any())).thenReturn("cache-key");
         Mockito.when(redisResponseCacheService.get("cache-key")).thenReturn(Mono.just("cached-body"));
 
-        AiGatewayService service = new AiGatewayService(
+        AiGatewayProperties gatewayProperties = new AiGatewayProperties();
+        RequestTracePublisher tracePublisher = new RequestTracePublisher(Mockito.mock(AiRequestTraceBus.class));
+        UpstreamCallExecutor upstreamCallExecutor = new UpstreamCallExecutor(
                 WebClient.builder().build(),
-                providerRoutingService,
-                tenantModelPolicyService,
                 List.<ProviderAdapter>of(),
-                metricsRecorder,
+                Mockito.mock(ReactiveCircuitBreakerFactory.class),
+                Mockito.mock(UpstreamCredentialService.class),
+                Mockito.mock(PluginChainService.class),
                 Mockito.mock(AiSafetyGuard.class),
+                new ProviderRateLimitService(gatewayProperties),
+                providerRoutingService,
+                gatewayProperties,
+                tracePublisher
+        );
+        AiGatewayService service = new AiGatewayService(
+                new RoutingPlanResolver(gatewayProperties, providerRoutingService, tenantModelPolicyService),
+                metricsRecorder,
                 mockQuotaService(),
                 Mockito.mock(UsageExtractor.class),
                 aiCacheControlService,
@@ -228,10 +285,11 @@ class AiGatewayServiceUsageRecordTest {
                 Mockito.mock(AiCacheStatsService.class),
                 redisResponseCacheService,
                 Mockito.mock(NoopSemanticCacheService.class),
-                Mockito.mock(PluginChainService.class),
-                new AiGatewayProperties(),
-                Mockito.mock(ReactiveCircuitBreakerFactory.class),
-                Mockito.mock(AiGatewayTracer.class)
+                gatewayProperties,
+                Mockito.mock(AiGatewayTracer.class),
+                new RateLimitHeaderService(),
+                tracePublisher,
+                upstreamCallExecutor
         );
 
         String body = service.chatCompletion(request(), new HttpHeaders(), new TenantContext("tenant-a", "app-a", "key-a")).block();
@@ -244,6 +302,81 @@ class AiGatewayServiceUsageRecordTest {
         Assertions.assertEquals("app-a", captor.getValue().getAppId());
         Assertions.assertEquals("key-a", captor.getValue().getKeyId());
         Assertions.assertEquals(Boolean.TRUE, captor.getValue().getCacheHit());
+        // 缓存命中没有打到上游，不能污染 provider 健康度
+        Mockito.verify(providerRoutingService, Mockito.never()).recordProviderOutcome(Mockito.anyString(),
+                Mockito.anyString(), Mockito.anyLong(), Mockito.anyBoolean(), Mockito.anyLong(), Mockito.anyLong());
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void shouldRecordSemanticCacheHitExactlyLikeExactHit() {
+        ProviderRoutingService providerRoutingService = Mockito.mock(ProviderRoutingService.class);
+        TenantModelPolicyService tenantModelPolicyService = Mockito.mock(TenantModelPolicyService.class);
+        AiGatewayMetricsRecorder metricsRecorder = Mockito.mock(AiGatewayMetricsRecorder.class);
+        AiCacheControlService aiCacheControlService = Mockito.mock(AiCacheControlService.class);
+        AiCacheKeyService aiCacheKeyService = Mockito.mock(AiCacheKeyService.class);
+        AiCacheStatsService aiCacheStatsService = Mockito.mock(AiCacheStatsService.class);
+        RedisResponseCacheService redisResponseCacheService = mockResponseCache();
+        NoopSemanticCacheService semanticCacheService = Mockito.mock(NoopSemanticCacheService.class);
+
+        Mockito.when(tenantModelPolicyService.resolveModel(Mockito.any(), Mockito.anyString())).thenReturn("gpt-4o-mini");
+        Mockito.when(providerRoutingService.resolve(Mockito.anyString(), Mockito.any()))
+                .thenReturn(AiRoutingResult.builder().provider("openai").providerModel("gpt-4o-mini").upstreamUri("http://localhost").build());
+        Mockito.when(aiCacheControlService.enabledForRequest(Mockito.any(), eq(false))).thenReturn(true);
+        Mockito.when(aiCacheKeyService.build(Mockito.any(), Mockito.anyString(), Mockito.anyString(), Mockito.any())).thenReturn("cache-key");
+        // 精确缓存未命中，落到语义缓存
+        Mockito.when(redisResponseCacheService.get("cache-key")).thenReturn(Mono.empty());
+        Mockito.when(semanticCacheService.find(Mockito.anyString(), Mockito.anyString(), Mockito.any()))
+                .thenReturn(Optional.of("semantic-body"));
+
+        AiGatewayProperties gatewayProperties = new AiGatewayProperties();
+        RequestTracePublisher tracePublisher = new RequestTracePublisher(Mockito.mock(AiRequestTraceBus.class));
+        UpstreamCallExecutor upstreamCallExecutor = new UpstreamCallExecutor(
+                WebClient.builder().build(),
+                List.<ProviderAdapter>of(),
+                Mockito.mock(ReactiveCircuitBreakerFactory.class),
+                Mockito.mock(UpstreamCredentialService.class),
+                Mockito.mock(PluginChainService.class),
+                Mockito.mock(AiSafetyGuard.class),
+                new ProviderRateLimitService(gatewayProperties),
+                providerRoutingService,
+                gatewayProperties,
+                tracePublisher
+        );
+        AiGatewayService service = new AiGatewayService(
+                new RoutingPlanResolver(gatewayProperties, providerRoutingService, tenantModelPolicyService),
+                metricsRecorder,
+                mockQuotaService(),
+                Mockito.mock(UsageExtractor.class),
+                aiCacheControlService,
+                aiCacheKeyService,
+                aiCacheStatsService,
+                redisResponseCacheService,
+                semanticCacheService,
+                gatewayProperties,
+                Mockito.mock(AiGatewayTracer.class),
+                new RateLimitHeaderService(),
+                tracePublisher,
+                upstreamCallExecutor
+        );
+
+        String body = service.chatCompletion(request(), new HttpHeaders(), new TenantContext("tenant-a", "app-a", "key-a")).block();
+
+        Assertions.assertEquals("semantic-body", body);
+        Mockito.verify(aiCacheStatsService).recordSemanticHit();
+        // 关键：语义命中也必须留下调用明细，否则"租户 cacheHit 记到了、调用列表里却找不到这次请求"
+        ArgumentCaptor<AiCallRecord> captor = ArgumentCaptor.forClass(AiCallRecord.class);
+        Mockito.verify(metricsRecorder).recordCall(captor.capture());
+        Assertions.assertEquals(Boolean.TRUE, captor.getValue().getCacheHit());
+        Assertions.assertEquals(200, captor.getValue().getStatus());
+        Assertions.assertEquals("tenant-a", captor.getValue().getTenantId());
+        Assertions.assertEquals("app-a", captor.getValue().getAppId());
+        Assertions.assertEquals("key-a", captor.getValue().getKeyId());
+        Assertions.assertEquals(0L, captor.getValue().getLatencyMillis().longValue());
+        // 两类命中对租户聚合都只算一次，不能因为走了两层缓存就重复计数
+        Mockito.verify(metricsRecorder, Mockito.times(1)).recordTenantCacheEvent("tenant-a", "hit");
+        Mockito.verify(providerRoutingService, Mockito.never()).recordProviderOutcome(Mockito.anyString(),
+                Mockito.anyString(), Mockito.anyLong(), Mockito.anyBoolean(), Mockito.anyLong(), Mockito.anyLong());
     }
 
     @Test
@@ -269,13 +402,23 @@ class AiGatewayServiceUsageRecordTest {
                         .monthKey("month")
                         .build()));
 
-        AiGatewayService service = new AiGatewayService(
+        AiGatewayProperties gatewayProperties = new AiGatewayProperties();
+        RequestTracePublisher tracePublisher = new RequestTracePublisher(Mockito.mock(AiRequestTraceBus.class));
+        UpstreamCallExecutor upstreamCallExecutor = new UpstreamCallExecutor(
                 WebClient.builder().build(),
-                providerRoutingService,
-                tenantModelPolicyService,
                 List.<ProviderAdapter>of(),
-                metricsRecorder,
+                Mockito.mock(ReactiveCircuitBreakerFactory.class),
+                Mockito.mock(UpstreamCredentialService.class),
+                Mockito.mock(PluginChainService.class),
                 Mockito.mock(AiSafetyGuard.class),
+                new ProviderRateLimitService(gatewayProperties),
+                providerRoutingService,
+                gatewayProperties,
+                tracePublisher
+        );
+        AiGatewayService service = new AiGatewayService(
+                new RoutingPlanResolver(gatewayProperties, providerRoutingService, tenantModelPolicyService),
+                metricsRecorder,
                 redisTokenQuotaService,
                 Mockito.mock(UsageExtractor.class),
                 Mockito.mock(AiCacheControlService.class),
@@ -283,18 +426,25 @@ class AiGatewayServiceUsageRecordTest {
                 Mockito.mock(AiCacheStatsService.class),
                 redisResponseCacheService,
                 Mockito.mock(NoopSemanticCacheService.class),
-                Mockito.mock(PluginChainService.class),
-                new AiGatewayProperties(),
-                Mockito.mock(ReactiveCircuitBreakerFactory.class),
-                Mockito.mock(AiGatewayTracer.class)
+                gatewayProperties,
+                Mockito.mock(AiGatewayTracer.class),
+                new RateLimitHeaderService(),
+                tracePublisher,
+                upstreamCallExecutor
         );
 
-        RuntimeException exception = Assertions.assertThrows(RuntimeException.class,
-                () -> service.streamChatCompletion(streamRequest(), new HttpHeaders(), new TenantContext("tenant-a", "app-a", "key-a"))
-                        .collectList()
-                        .block());
+        // 流式链路无法再改 HTTP 状态码：失败必须转成 OpenAI 兼容错误帧并补 [DONE]，
+        // 否则客户端只会看到连接被截断，无法区分"上游挂了"与"网络抖动"。
+        java.util.List<String> chunks = service.streamChatCompletion(streamRequest(), new HttpHeaders(),
+                        new TenantContext("tenant-a", "app-a", "key-a"))
+                .collectList()
+                .block();
 
-        Assertions.assertNotNull(exception);
+        Assertions.assertNotNull(chunks);
+        Assertions.assertEquals(2, chunks.size());
+        Assertions.assertTrue(chunks.get(0).contains("\"error\""), "首个事件应为错误帧: " + chunks.get(0));
+        Assertions.assertTrue(chunks.get(0).contains("provider_adapter_not_found"), "错误帧应携带机器可读错误码: " + chunks.get(0));
+        Assertions.assertEquals("[DONE]", chunks.get(1));
         Mockito.verifyNoInteractions(redisResponseCacheService);
         Mockito.verify(metricsRecorder, Mockito.never()).recordTenantCacheEvent(Mockito.anyString(), Mockito.anyString());
     }
@@ -319,13 +469,23 @@ class AiGatewayServiceUsageRecordTest {
         Mockito.when(redisTokenQuotaService.preCheck(Mockito.any(), Mockito.any(), Mockito.anyString(), Mockito.anyString(), Mockito.any()))
                 .thenReturn(Mono.error(new AiGatewayClientException(AiGatewayErrorCode.QUOTA_EXCEEDED, "Token 配额不足，已触发限流")));
 
-        AiGatewayService service = new AiGatewayService(
+        AiGatewayProperties gatewayProperties = new AiGatewayProperties();
+        RequestTracePublisher tracePublisher = new RequestTracePublisher(Mockito.mock(AiRequestTraceBus.class));
+        UpstreamCallExecutor upstreamCallExecutor = new UpstreamCallExecutor(
                 WebClient.builder().build(),
-                providerRoutingService,
-                tenantModelPolicyService,
                 List.of(providerAdapter),
-                metricsRecorder,
+                Mockito.mock(ReactiveCircuitBreakerFactory.class),
+                Mockito.mock(UpstreamCredentialService.class),
+                pluginChainService,
                 Mockito.mock(AiSafetyGuard.class),
+                new ProviderRateLimitService(gatewayProperties),
+                providerRoutingService,
+                gatewayProperties,
+                tracePublisher
+        );
+        AiGatewayService service = new AiGatewayService(
+                new RoutingPlanResolver(gatewayProperties, providerRoutingService, tenantModelPolicyService),
+                metricsRecorder,
                 redisTokenQuotaService,
                 Mockito.mock(UsageExtractor.class),
                 Mockito.mock(AiCacheControlService.class),
@@ -333,10 +493,11 @@ class AiGatewayServiceUsageRecordTest {
                 Mockito.mock(AiCacheStatsService.class),
                 redisResponseCacheService,
                 Mockito.mock(NoopSemanticCacheService.class),
-                pluginChainService,
-                new AiGatewayProperties(),
-                Mockito.mock(ReactiveCircuitBreakerFactory.class),
-                Mockito.mock(AiGatewayTracer.class)
+                gatewayProperties,
+                Mockito.mock(AiGatewayTracer.class),
+                new RateLimitHeaderService(),
+                tracePublisher,
+                upstreamCallExecutor
         );
 
         StepVerifier.create(service.chatCompletion(request(), new HttpHeaders(), new TenantContext("tenant-a", "app-a", "key-a")))
@@ -390,13 +551,23 @@ class AiGatewayServiceUsageRecordTest {
         Mockito.when(circuitBreakerFactory.create(Mockito.anyString())).thenReturn(circuitBreaker);
         Mockito.when(circuitBreaker.run(Mockito.any(Mono.class), Mockito.any())).thenAnswer(invocation -> invocation.getArgument(0));
 
-        AiGatewayService service = new AiGatewayService(
+        AiGatewayProperties gatewayProperties = new AiGatewayProperties();
+        RequestTracePublisher tracePublisher = new RequestTracePublisher(Mockito.mock(AiRequestTraceBus.class));
+        UpstreamCallExecutor upstreamCallExecutor = new UpstreamCallExecutor(
                 WebClient.builder().exchangeFunction(successExchangeFunction("upstream-body")).build(),
-                providerRoutingService,
-                tenantModelPolicyService,
                 List.of(providerAdapter),
-                metricsRecorder,
+                circuitBreakerFactory,
+                Mockito.mock(UpstreamCredentialService.class),
+                pluginChainService,
                 aiSafetyGuard,
+                new ProviderRateLimitService(gatewayProperties),
+                providerRoutingService,
+                gatewayProperties,
+                tracePublisher
+        );
+        AiGatewayService service = new AiGatewayService(
+                new RoutingPlanResolver(gatewayProperties, providerRoutingService, tenantModelPolicyService),
+                metricsRecorder,
                 redisTokenQuotaService,
                 usageExtractor,
                 aiCacheControlService,
@@ -404,10 +575,11 @@ class AiGatewayServiceUsageRecordTest {
                 aiCacheStatsService,
                 redisResponseCacheService,
                 Mockito.mock(NoopSemanticCacheService.class),
-                pluginChainService,
-                new AiGatewayProperties(),
-                circuitBreakerFactory,
-                Mockito.mock(AiGatewayTracer.class)
+                gatewayProperties,
+                Mockito.mock(AiGatewayTracer.class),
+                new RateLimitHeaderService(),
+                tracePublisher,
+                upstreamCallExecutor
         );
 
         RuntimeException exception = Assertions.assertThrows(RuntimeException.class,
@@ -427,6 +599,7 @@ class AiGatewayServiceUsageRecordTest {
     private static RedisTokenQuotaService mockQuotaService() {
         RedisTokenQuotaService mock = Mockito.mock(RedisTokenQuotaService.class);
         Mockito.when(mock.adjustByActualUsage(Mockito.any(), Mockito.anyLong())).thenReturn(Mono.empty());
+        Mockito.when(mock.release(Mockito.any())).thenReturn(Mono.empty());
         return mock;
     }
 

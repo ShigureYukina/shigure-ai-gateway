@@ -1,5 +1,6 @@
 package com.nageoffer.shortlink.aigateway.controller;
 
+import com.nageoffer.shortlink.aigateway.config.AiGatewayProperties;
 import com.nageoffer.shortlink.aigateway.dto.req.ConsoleLoginReqDTO;
 import com.nageoffer.shortlink.aigateway.exception.AiGatewayClientException;
 import com.nageoffer.shortlink.aigateway.exception.AiGatewayErrorCode;
@@ -22,7 +23,7 @@ class AiGatewayExceptionHandlerTest {
     @BeforeEach
     void setUp() {
         webTestClient = WebTestClient.bindToController(new ThrowingTestController())
-                .controllerAdvice(new AiGatewayExceptionHandler())
+                .controllerAdvice(new AiGatewayExceptionHandler(new AiGatewayProperties()))
                 .build();
     }
 

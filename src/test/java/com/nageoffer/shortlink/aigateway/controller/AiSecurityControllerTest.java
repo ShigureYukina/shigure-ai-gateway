@@ -2,11 +2,21 @@ package com.nageoffer.shortlink.aigateway.controller;
 
 import com.nageoffer.shortlink.aigateway.audit.AuditLogService;
 import com.nageoffer.shortlink.aigateway.config.AiGatewayProperties;
+import com.nageoffer.shortlink.aigateway.exception.AiGatewayClientException;
+import com.nageoffer.shortlink.aigateway.exception.AiGatewayErrorCode;
+import com.nageoffer.shortlink.aigateway.runtime.RuntimeConfigDomain;
+import com.nageoffer.shortlink.aigateway.runtime.RuntimeConfigPublisher;
+import com.nageoffer.shortlink.aigateway.runtime.RuntimeConfigSupport;
 import com.nageoffer.shortlink.aigateway.security.ConsoleAuthService;
+import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
+import org.springframework.mock.http.server.reactive.MockServerHttpRequest;
+import org.springframework.mock.web.server.MockServerWebExchange;
 import org.springframework.test.web.reactive.server.WebTestClient;
+import org.springframework.web.server.ServerWebExchange;
+import reactor.core.publisher.Mono;
 
 import java.time.Instant;
 import java.util.List;
@@ -20,6 +30,7 @@ class AiSecurityControllerTest {
     private AiGatewayProperties properties;
     private ConsoleAuthService consoleAuthService;
     private AuditLogService auditLogService;
+    private RuntimeConfigPublisher runtimeConfigPublisher;
     private WebTestClient webTestClient;
 
     @BeforeEach
@@ -27,7 +38,10 @@ class AiSecurityControllerTest {
         properties = new AiGatewayProperties();
         consoleAuthService = Mockito.mock(ConsoleAuthService.class);
         auditLogService = Mockito.mock(AuditLogService.class);
-        webTestClient = WebTestClient.bindToController(new AiSecurityController(properties, consoleAuthService, auditLogService)).build();
+        runtimeConfigPublisher = Mockito.mock(RuntimeConfigPublisher.class);
+        Mockito.when(runtimeConfigPublisher.save(any(), any())).thenAnswer(invocation -> Mono.just(invocation.getArgument(1)));
+        webTestClient = WebTestClient.bindToController(
+                new AiSecurityController(properties, consoleAuthService, auditLogService, runtimeConfigPublisher)).build();
     }
 
     @Test
@@ -84,6 +98,9 @@ class AiSecurityControllerTest {
                 .jsonPath("$.writeRoles.length()").isEqualTo(2)
                 .jsonPath("$.currentRole").isEqualTo("admin");
 
+        // 落库改动 enabled 之后，响应里的当前身份必须还是登录人，不能被降级成 anonymous
+        Mockito.verify(runtimeConfigPublisher).save(eq(RuntimeConfigDomain.SECURITY), any());
+
         webTestClient.post()
                 .uri("/v1/security/logout")
                 .header("X-Console-Token", "token-1")
@@ -107,5 +124,27 @@ class AiSecurityControllerTest {
                 .expectBody()
                 .jsonPath("$.success").isEqualTo(false)
                 .jsonPath("$.message").isEqualTo("请输入用户名与密码");
+    }
+
+    @Test
+    void shouldRefuseToDisableSecurityWhenForceFlagIsOn() {
+        System.setProperty(RuntimeConfigSupport.SECURITY_FORCE_ENABLED_KEY, "true");
+        try {
+            Mockito.when(consoleAuthService.authenticate(any()))
+                    .thenReturn(new ConsoleAuthService.AuthPrincipal("admin", "admin"));
+            AiSecurityController controller = new AiSecurityController(properties, consoleAuthService, auditLogService, runtimeConfigPublisher);
+            ServerWebExchange exchange = MockServerWebExchange.from(
+                    MockServerHttpRequest.post("/v1/security/config").build());
+
+            // 强制开关是"无论如何都要鉴权"的兜底，不能被控制台一次写入绕过去
+            AiGatewayClientException ex = Assertions.assertThrows(AiGatewayClientException.class,
+                    () -> controller.update(Map.of("enabled", false), exchange));
+
+            Assertions.assertEquals(AiGatewayErrorCode.BAD_REQUEST, ex.getErrorCode());
+            Assertions.assertTrue(properties.getSecurity().isEnabled());
+            Mockito.verify(runtimeConfigPublisher, Mockito.never()).save(any(), any());
+        } finally {
+            System.clearProperty(RuntimeConfigSupport.SECURITY_FORCE_ENABLED_KEY);
+        }
     }
 }

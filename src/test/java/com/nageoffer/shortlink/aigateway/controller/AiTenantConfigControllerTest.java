@@ -2,6 +2,7 @@ package com.nageoffer.shortlink.aigateway.controller;
 
 import com.nageoffer.shortlink.aigateway.audit.AuditLogService;
 import com.nageoffer.shortlink.aigateway.config.AiGatewayProperties;
+import com.nageoffer.shortlink.aigateway.config.AiGatewayTenantProperties;
 import com.nageoffer.shortlink.aigateway.persistence.service.TenantConfigManagementService;
 import com.nageoffer.shortlink.aigateway.persistence.service.TenantConfigQueryService;
 import com.nageoffer.shortlink.aigateway.security.ConsoleAuthService;
@@ -40,13 +41,13 @@ class AiTenantConfigControllerTest {
                         auditLogService,
                         tenantConfigQueryService,
                         tenantConfigManagementService))
-                .controllerAdvice(new AiGatewayExceptionHandler())
+                .controllerAdvice(new AiGatewayExceptionHandler(new AiGatewayProperties()))
                 .build();
     }
 
     @Test
     void shouldReadApiKeyAndModelPolicy() {
-        AiGatewayProperties.TenantApiKeyCredential credential = new AiGatewayProperties.TenantApiKeyCredential();
+        AiGatewayTenantProperties.TenantApiKeyCredential credential = new AiGatewayTenantProperties.TenantApiKeyCredential();
         credential.setTenantId("tenant-a");
         credential.setAppId("app-a");
         credential.setKeyId("key-a");
@@ -54,7 +55,7 @@ class AiTenantConfigControllerTest {
         credential.setExpiresAt(Instant.parse("2030-01-01T00:00:00Z"));
         Mockito.when(tenantConfigQueryService.findApiKeyCredential("secret-a")).thenReturn(Optional.of(credential));
 
-        AiGatewayProperties.TenantModelPolicy policy = new AiGatewayProperties.TenantModelPolicy();
+        AiGatewayTenantProperties.TenantModelPolicy policy = new AiGatewayTenantProperties.TenantModelPolicy();
         policy.setEnabled(true);
         policy.setAllowedModels(java.util.Set.of("gpt-4o-mini-compatible"));
         policy.setModelMappings(Map.of("default", "gpt-4o-mini-compatible"));
@@ -84,9 +85,10 @@ class AiTenantConfigControllerTest {
                 "description", "app-desc"
         )));
 
-        webTestClient.get()
-                .uri("/v1/tenant-config/api-keys/secret-a")
+        webTestClient.post()
+                .uri("/v1/tenant-config/api-keys/lookup")
                 .header("X-Console-Token", "token-1")
+                .bodyValue(Map.of("apiKey", "secret-a"))
                 .exchange()
                 .expectStatus().isOk()
                 .expectBody()
@@ -190,14 +192,15 @@ class AiTenantConfigControllerTest {
     void shouldDeleteTenantConfigAndAudit() {
         Mockito.when(tenantConfigManagementService.deleteTenant("tenant-a")).thenReturn(Mono.just(Map.of("tenantId", "tenant-a", "deleted", true)));
         Mockito.when(tenantConfigManagementService.deleteTenantApp("tenant-a", "app-a")).thenReturn(Mono.just(Map.of("tenantId", "tenant-a", "appId", "app-a", "deleted", true)));
-        Mockito.when(tenantConfigManagementService.deleteApiKey("secret-a")).thenReturn(Mono.just(Map.of("apiKey", "secret-a", "deleted", true)));
+        Mockito.when(tenantConfigManagementService.deleteApiKey("secret-a")).thenReturn(Mono.just(Map.of("deleted", true)));
         Mockito.when(tenantConfigManagementService.deleteModelPolicy("tenant-a")).thenReturn(Mono.just(Map.of("tenantId", "tenant-a", "deleted", true)));
         Mockito.when(tenantConfigManagementService.deleteQuotaPolicy("tenant-a")).thenReturn(Mono.just(Map.of("tenantId", "tenant-a", "deleted", true)));
         Mockito.when(tenantConfigManagementService.deleteModelPrice("gpt-4o-mini")).thenReturn(Mono.just(Map.of("model", "gpt-4o-mini", "deleted", true)));
 
         webTestClient.delete().uri("/v1/tenant-config/tenants/tenant-a").header("X-Console-Token", "token-1").exchange().expectStatus().isOk().expectBody().jsonPath("$.deleted").isEqualTo(true);
         webTestClient.delete().uri("/v1/tenant-config/tenants/tenant-a/apps/app-a").header("X-Console-Token", "token-1").exchange().expectStatus().isOk().expectBody().jsonPath("$.appId").isEqualTo("app-a");
-        webTestClient.delete().uri("/v1/tenant-config/api-keys/secret-a").header("X-Console-Token", "token-1").exchange().expectStatus().isOk().expectBody().jsonPath("$.apiKey").isEqualTo("secret-a");
+        // DELETE 带 body 要走 method(...)：webTestClient.delete() 返回的 Spec 没有 bodyValue
+        webTestClient.method(org.springframework.http.HttpMethod.DELETE).uri("/v1/tenant-config/api-keys").header("X-Console-Token", "token-1").bodyValue(Map.of("apiKey", "secret-a")).exchange().expectStatus().isOk().expectBody().jsonPath("$.deleted").isEqualTo(true).jsonPath("$.apiKey").doesNotExist();
         webTestClient.delete().uri("/v1/tenant-config/model-policies/tenant-a").header("X-Console-Token", "token-1").exchange().expectStatus().isOk().expectBody().jsonPath("$.deleted").isEqualTo(true);
         webTestClient.delete().uri("/v1/tenant-config/quota-policies/tenant-a").header("X-Console-Token", "token-1").exchange().expectStatus().isOk().expectBody().jsonPath("$.deleted").isEqualTo(true);
         webTestClient.delete().uri("/v1/tenant-config/model-prices/gpt-4o-mini").header("X-Console-Token", "token-1").exchange().expectStatus().isOk().expectBody().jsonPath("$.model").isEqualTo("gpt-4o-mini");

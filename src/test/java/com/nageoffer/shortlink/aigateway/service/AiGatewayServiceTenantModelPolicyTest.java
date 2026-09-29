@@ -1,6 +1,8 @@
 package com.nageoffer.shortlink.aigateway.service;
 
 import com.nageoffer.shortlink.aigateway.adapter.ProviderAdapter;
+import com.nageoffer.shortlink.aigateway.governance.ProviderRateLimitService;
+import com.nageoffer.shortlink.aigateway.observability.AiRequestTraceBus;
 import com.nageoffer.shortlink.aigateway.config.AiGatewayProperties;
 import com.nageoffer.shortlink.aigateway.dto.req.AiChatCompletionMessage;
 import com.nageoffer.shortlink.aigateway.dto.req.AiChatCompletionReqDTO;
@@ -14,10 +16,14 @@ import com.nageoffer.shortlink.aigateway.governance.AiSafetyGuard;
 import com.nageoffer.shortlink.aigateway.governance.NoopSemanticCacheService;
 import com.nageoffer.shortlink.aigateway.governance.RedisResponseCacheService;
 import com.nageoffer.shortlink.aigateway.governance.RedisTokenQuotaService;
+import com.nageoffer.shortlink.aigateway.governance.RateLimitHeaderService;
+import com.nageoffer.shortlink.aigateway.governance.UpstreamCredentialService;
 import com.nageoffer.shortlink.aigateway.governance.UsageExtractor;
 import com.nageoffer.shortlink.aigateway.observability.AiGatewayMetricsRecorder;
+import com.nageoffer.shortlink.aigateway.observability.RequestTracePublisher;
 import com.nageoffer.shortlink.aigateway.plugin.PluginChainService;
 import com.nageoffer.shortlink.aigateway.routing.ProviderRoutingService;
+import com.nageoffer.shortlink.aigateway.routing.RoutingPlanResolver;
 import com.nageoffer.shortlink.aigateway.tenant.TenantContext;
 import com.nageoffer.shortlink.aigateway.tenant.TenantModelPolicyService;
 import org.junit.jupiter.api.Assertions;
@@ -38,13 +44,23 @@ class AiGatewayServiceTenantModelPolicyTest {
         Mockito.when(tenantModelPolicyService.resolveModel(Mockito.any(), Mockito.anyString()))
                 .thenThrow(new AiGatewayClientException(AiGatewayErrorCode.FORBIDDEN, "当前租户无权访问模型: claude-3-5-sonnet-latest"));
 
-        AiGatewayService service = new AiGatewayService(
+        AiGatewayProperties properties = new AiGatewayProperties();
+        RequestTracePublisher tracePublisher = new RequestTracePublisher(Mockito.mock(AiRequestTraceBus.class));
+        UpstreamCallExecutor upstreamCallExecutor = new UpstreamCallExecutor(
                 WebClient.builder().build(),
-                providerRoutingService,
-                tenantModelPolicyService,
                 List.<ProviderAdapter>of(),
-                Mockito.mock(AiGatewayMetricsRecorder.class),
+                Mockito.mock(ReactiveCircuitBreakerFactory.class),
+                Mockito.mock(UpstreamCredentialService.class),
+                Mockito.mock(PluginChainService.class),
                 Mockito.mock(AiSafetyGuard.class),
+                new ProviderRateLimitService(properties),
+                providerRoutingService,
+                properties,
+                tracePublisher
+        );
+        AiGatewayService service = new AiGatewayService(
+                new RoutingPlanResolver(properties, providerRoutingService, tenantModelPolicyService),
+                Mockito.mock(AiGatewayMetricsRecorder.class),
                 Mockito.mock(RedisTokenQuotaService.class),
                 Mockito.mock(UsageExtractor.class),
                 Mockito.mock(AiCacheControlService.class),
@@ -52,10 +68,11 @@ class AiGatewayServiceTenantModelPolicyTest {
                 Mockito.mock(AiCacheStatsService.class),
                 Mockito.mock(RedisResponseCacheService.class),
                 Mockito.mock(NoopSemanticCacheService.class),
-                Mockito.mock(PluginChainService.class),
-                new AiGatewayProperties(),
-                Mockito.mock(ReactiveCircuitBreakerFactory.class),
-                Mockito.mock(AiGatewayTracer.class)
+                properties,
+                Mockito.mock(AiGatewayTracer.class),
+                new RateLimitHeaderService(),
+                tracePublisher,
+                upstreamCallExecutor
         );
 
         AiGatewayClientException exception = Assertions.assertThrows(AiGatewayClientException.class,

@@ -1,5 +1,6 @@
 package com.nageoffer.shortlink.aigateway.controller;
 
+import com.nageoffer.shortlink.aigateway.config.AiGatewayProperties;
 import com.nageoffer.shortlink.aigateway.dto.req.AiChatCompletionMessage;
 import com.nageoffer.shortlink.aigateway.dto.req.AiChatCompletionReqDTO;
 import com.nageoffer.shortlink.aigateway.security.ApiKeyAuthService;
@@ -30,7 +31,7 @@ class AiGatewayControllerTest {
         apiKeyAuthService = Mockito.mock(ApiKeyAuthService.class);
         Mockito.when(apiKeyAuthService.authenticate(any())).thenReturn(new TenantContext("tenant-a", "app-a", "key-a"));
         webTestClient = WebTestClient.bindToController(new AiGatewayController(aiGatewayService, apiKeyAuthService))
-                .controllerAdvice(new AiGatewayExceptionHandler())
+                .controllerAdvice(new AiGatewayExceptionHandler(new AiGatewayProperties()))
                 .build();
     }
 

@@ -1,0 +1,113 @@
+{
+  "base_url": "http://aigw-mock:18080",
+  "scenarios": [
+    {
+      "scenario": "non_stream_success",
+      "requests": 100,
+      "concurrency": 1,
+      "success": 100,
+      "failure": 0,
+      "success_rate": 1.0,
+      "throughput_rps": 27.17,
+      "wall_seconds": 3.68,
+      "latency_ms": {
+        "avg": 36.71,
+        "p50": 36.48,
+        "p95": 37.02,
+        "p99": 37.98,
+        "max": 52.75
+      },
+      "first_byte_ms": {
+        "avg": null,
+        "p50": null,
+        "p95": null,
+        "max": null
+      },
+      "status_counts": {
+        "200": 100
+      },
+      "sample_errors": []
+    },
+    {
+      "scenario": "stream_success",
+      "requests": 25,
+      "concurrency": 2,
+      "success": 25,
+      "failure": 0,
+      "success_rate": 1.0,
+      "throughput_rps": 48.77,
+      "wall_seconds": 0.513,
+      "latency_ms": {
+        "avg": 39.32,
+        "p50": 39.19,
+        "p95": 40.01,
+        "p99": 40.06,
+        "max": 40.07
+      },
+      "first_byte_ms": {
+        "avg": 21.25,
+        "p50": 21.21,
+        "p95": 21.58,
+        "max": 21.8
+      },
+      "status_counts": {
+        "200": 25
+      },
+      "sample_errors": []
+    },
+    {
+      "scenario": "missing_api_key_unauthorized",
+      "requests": 25,
+      "concurrency": 2,
+      "success": 25,
+      "failure": 0,
+      "success_rate": 1.0,
+      "throughput_rps": 52.76,
+      "wall_seconds": 0.474,
+      "latency_ms": {
+        "avg": 36.36,
+        "p50": 36.32,
+        "p95": 36.59,
+        "p99": 36.61,
+        "max": 36.61
+      },
+      "first_byte_ms": {
+        "avg": null,
+        "p50": null,
+        "p95": null,
+        "max": null
+      },
+      "status_counts": {
+        "200": 25
+      },
+      "sample_errors": []
+    },
+    {
+      "scenario": "forbidden_model_rejected",
+      "requests": 25,
+      "concurrency": 2,
+      "success": 25,
+      "failure": 0,
+      "success_rate": 1.0,
+      "throughput_rps": 52.72,
+      "wall_seconds": 0.474,
+      "latency_ms": {
+        "avg": 36.39,
+        "p50": 36.39,
+        "p95": 36.59,
+        "p99": 36.83,
+        "max": 36.9
+      },
+      "first_byte_ms": {
+        "avg": null,
+        "p50": null,
+        "p95": null,
+        "max": null
+      },
+      "status_counts": {
+        "200": 25
+      },
+      "sample_errors": []
+    }
+  ]
+}

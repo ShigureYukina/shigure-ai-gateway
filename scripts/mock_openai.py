@@ -33,6 +33,11 @@ class MockServer(ThreadingHTTPServer):
 class MockHandler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     server_version = "mock-openai/2.0"
+    # Nagle's algorithm is on by default. Combined with delayed ACK on the
+    # gateway's keep-alive connection it stalls each response by ~40ms, which
+    # gets misread as gateway overhead. Every request here is a small
+    # request/response pair, so batching gains nothing.
+    disable_nagle_algorithm = True
 
     def do_POST(self):
         if self.path != "/v1/chat/completions":
@@ -90,6 +95,22 @@ class MockHandler(BaseHTTPRequestHandler):
             }
             self._write_chunk(f"data: {json.dumps(event)}\n\n".encode("utf-8"))
             _sleep_ms(interval_ms, CONFIG["jitter_ms"] / chunk_count)
+
+        # 真实 OpenAI 在 stream_options.include_usage 打开时，会在 [DONE] 前补发一个
+        # 只带 usage 的 chunk。mock 必须对齐，否则网关的"流式用量结算"在本地产线
+        # 无法被验证，只能靠真实上游才能发现问题。
+        usage_chunk = {
+            "id": chunk_id,
+            "object": "chat.completion.chunk",
+            "model": model,
+            "choices": [],
+            "usage": {
+                "prompt_tokens": 10,
+                "completion_tokens": chunk_count,
+                "total_tokens": 10 + chunk_count,
+            },
+        }
+        self._write_chunk(f"data: {json.dumps(usage_chunk)}\n\n".encode("utf-8"))
 
         self._write_chunk(b"data: [DONE]\n\n")
         self.wfile.write(b"0\r\n\r\n")

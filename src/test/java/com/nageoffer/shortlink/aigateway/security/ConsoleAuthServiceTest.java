@@ -1,6 +1,7 @@
 package com.nageoffer.shortlink.aigateway.security;
 
 import com.nageoffer.shortlink.aigateway.config.AiGatewayProperties;
+import com.nageoffer.shortlink.aigateway.config.AiGatewaySecurityProperties;
 import com.nageoffer.shortlink.aigateway.exception.AiGatewayClientException;
 import com.nageoffer.shortlink.aigateway.exception.AiGatewayErrorCode;
 import org.junit.jupiter.api.Assertions;
@@ -69,6 +70,32 @@ class ConsoleAuthServiceTest {
         enabledService.assertWriteAllowed(new ConsoleAuthService.AuthPrincipal("admin", "admin"));
     }
 
+    @Test
+    void shouldLoginWithBcryptHashedPassword() {
+        PasswordEncoderSupport encoder = new PasswordEncoderSupport();
+        AiGatewayProperties properties = baseProperties(true);
+        properties.getSecurity().setUsers(Map.of(
+                "admin", new AiGatewaySecurityProperties.UserCredential(encoder.encode("pwd-admin"), "admin")
+        ));
+        ConsoleAuthService service = new ConsoleAuthService(properties, new JwtTokenService(properties), encoder);
+
+        Assertions.assertNotNull(service.login("admin", "pwd-admin").token());
+        AiGatewayClientException wrong = Assertions.assertThrows(AiGatewayClientException.class,
+                () -> service.login("admin", "pwd-admin "));
+        Assertions.assertEquals(AiGatewayErrorCode.UNAUTHORIZED, wrong.getErrorCode());
+    }
+
+    @Test
+    void shouldRejectUnknownUserAndBlankPassword() {
+        AiGatewayProperties properties = baseProperties(true);
+        ConsoleAuthService service = new ConsoleAuthService(properties, new JwtTokenService(properties));
+
+        Assertions.assertEquals(AiGatewayErrorCode.UNAUTHORIZED,
+                Assertions.assertThrows(AiGatewayClientException.class, () -> service.login("nobody", "any")).getErrorCode());
+        Assertions.assertEquals(AiGatewayErrorCode.UNAUTHORIZED,
+                Assertions.assertThrows(AiGatewayClientException.class, () -> service.login("admin", "")).getErrorCode());
+    }
+
     private AiGatewayProperties baseProperties(boolean securityEnabled) {
         AiGatewayProperties properties = new AiGatewayProperties();
         properties.getSecurity().setEnabled(securityEnabled);
@@ -76,8 +103,8 @@ class ConsoleAuthServiceTest {
         properties.getSecurity().setJwtIssuer("ai-gateway-test");
         properties.getSecurity().setJwtSecret("12345678901234567890123456789012");
         properties.getSecurity().setUsers(Map.of(
-                "admin", new AiGatewayProperties.UserCredential("pwd-admin", "admin"),
-                "viewer", new AiGatewayProperties.UserCredential("pwd-viewer", "viewer")
+                "admin", new AiGatewaySecurityProperties.UserCredential("pwd-admin", "admin"),
+                "viewer", new AiGatewaySecurityProperties.UserCredential("pwd-viewer", "viewer")
         ));
         properties.getSecurity().setWriteRoles(java.util.List.of("admin"));
         return properties;

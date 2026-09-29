@@ -1,6 +1,7 @@
 package com.nageoffer.shortlink.aigateway.tenant;
 
 import com.nageoffer.shortlink.aigateway.config.AiGatewayProperties;
+import com.nageoffer.shortlink.aigateway.config.AiGatewayTenantProperties;
 import com.nageoffer.shortlink.aigateway.exception.AiGatewayClientException;
 import com.nageoffer.shortlink.aigateway.exception.AiGatewayErrorCode;
 import com.nageoffer.shortlink.aigateway.persistence.service.TenantConfigQueryService;
@@ -29,7 +30,7 @@ public class TenantModelPolicyService {
         if (!properties.getTenant().isEnabled()) {
             return requestModel;
         }
-        AiGatewayProperties.TenantModelPolicy policy = tenantConfigQueryService.findModelPolicy(tenantContext.tenantId()).orElse(null);
+        AiGatewayTenantProperties.TenantModelPolicy policy = tenantConfigQueryService.findModelPolicy(tenantContext.tenantId()).orElse(null);
         if (policy == null || !policy.isEnabled()) {
             return requestModel;
         }
@@ -44,7 +45,7 @@ public class TenantModelPolicyService {
         return effectiveModel;
     }
 
-    private String resolveEffectiveModel(AiGatewayProperties.TenantModelPolicy policy, String requestModel) {
+    private String resolveEffectiveModel(AiGatewayTenantProperties.TenantModelPolicy policy, String requestModel) {
         String mappedModel = policy.getModelMappings().get(requestModel);
         if (StringUtils.hasText(mappedModel)) {
             return mappedModel;

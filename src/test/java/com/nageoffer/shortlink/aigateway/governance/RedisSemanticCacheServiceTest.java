@@ -217,6 +217,19 @@ class RedisSemanticCacheServiceTest {
         Assertions.assertTrue(result.isEmpty());
     }
 
+    @Test
+    void shouldTrimIndexWhenEntriesExceedConfiguredLimit() {
+        properties.getCache().setSemanticIndexMaxEntries(2);
+        when(valueOps.get(anyString())).thenReturn(null);
+        when(zSetOps.reverseRange(anyString(), eq(0L), eq(-1L))).thenReturn(Set.of());
+        when(zSetOps.zCard(anyString())).thenReturn(5L);
+
+        service.put("openai", "gpt-4o", request("test prompt"), "response");
+
+        // 索引按时间淘汰最旧条目，否则每个模型的索引会随请求量无界增长
+        verify(zSetOps).removeRange(anyString(), eq(0L), eq(2L));
+    }
+
     private AiChatCompletionReqDTO request(String content) {
         AiChatCompletionReqDTO req = new AiChatCompletionReqDTO();
         AiChatCompletionMessage msg = new AiChatCompletionMessage();

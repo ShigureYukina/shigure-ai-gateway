@@ -1,6 +1,8 @@
 package com.nageoffer.shortlink.aigateway.routing;
 
 import com.nageoffer.shortlink.aigateway.config.AiGatewayProperties;
+import com.nageoffer.shortlink.aigateway.config.AiGatewayRoutingProperties;
+import com.nageoffer.shortlink.aigateway.observability.CostEstimator;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -29,6 +31,7 @@ class ProviderHealthScoreServiceTest {
     private HashOperations<String, Object, Object> hashOps;
     private ZSetOperations<String, String> zSetOps;
     private AiGatewayProperties properties;
+    private CostEstimator costEstimator;
     private ProviderHealthScoreService service;
 
     @BeforeEach
@@ -36,17 +39,18 @@ class ProviderHealthScoreServiceTest {
         stringRedisTemplate = mock(StringRedisTemplate.class);
         hashOps = mock(HashOperations.class);
         zSetOps = mock(ZSetOperations.class);
+        costEstimator = mock(CostEstimator.class);
         properties = new AiGatewayProperties();
         properties.getRouting().setProviderPriority(List.of("openai", "claude"));
         properties.getUpstream().setDefaultProvider("openai");
         properties.getUpstream().getProviderBaseUrl().put("openai", "https://api.openai.com");
         properties.getUpstream().getProviderBaseUrl().put("claude", "https://api.anthropic.com");
-        properties.getRouting().setRoutingStrategy(AiGatewayProperties.RoutingStrategy.DYNAMIC);
+        properties.getRouting().setRoutingStrategy(AiGatewayRoutingProperties.RoutingStrategy.DYNAMIC);
 
         when(stringRedisTemplate.opsForHash()).thenReturn(hashOps);
         when(stringRedisTemplate.opsForZSet()).thenReturn(zSetOps);
 
-        service = new ProviderHealthScoreService(stringRedisTemplate, properties);
+        service = new ProviderHealthScoreService(stringRedisTemplate, properties, costEstimator);
     }
 
     @Test
@@ -113,24 +117,38 @@ class ProviderHealthScoreServiceTest {
     void shouldRecordProviderMetrics() {
         doReturn(1L).when(hashOps).increment(anyString(), anyString(), anyLong());
         when(zSetOps.add(anyString(), anyString(), anyDouble())).thenReturn(true);
+        when(costEstimator.estimate("gpt-4o", 1000L, 500L)).thenReturn(0.012);
 
-        service.recordProviderMetrics("openai", "gpt-4o", 500, true, 0.002);
+        service.recordProviderMetrics("openai", "gpt-4o", 500, true, 1000L, 500L);
 
         verify(hashOps).increment(anyString(), eq("calls"), anyLong());
         verify(hashOps).increment(anyString(), eq("success"), anyLong());
+        // 成本按 token 用量估算后写入，调用方不需要自己算钱
+        verify(costEstimator).estimate("gpt-4o", 1000L, 500L);
+        verify(hashOps).increment(anyString(), eq("cost"), eq(0.012));
         verify(zSetOps).add(anyString(), anyString(), eq(500.0));
     }
 
     @Test
+    void shouldWriteMetricsThroughAsyncEntry() {
+        doReturn(1L).when(hashOps).increment(anyString(), anyString(), anyLong());
+
+        service.recordProviderMetricsAsync("openai", "gpt-4o", 320, false, 0L, 0L);
+
+        verify(hashOps, Mockito.timeout(2000)).increment(anyString(), eq("calls"), anyLong());
+        verify(hashOps, Mockito.timeout(2000)).increment(anyString(), eq("cost"), anyDouble());
+    }
+
+    @Test
     void shouldNotRecordMetricsWhenProviderBlank() {
-        service.recordProviderMetrics("", "gpt-4o", 500, true, 0.002);
-        Mockito.verifyNoInteractions(hashOps);
+        service.recordProviderMetrics("", "gpt-4o", 500, true, 0L, 0L);
+        Mockito.verifyNoInteractions(hashOps, costEstimator);
     }
 
     @Test
     void shouldNotRecordMetricsWhenModelBlank() {
-        service.recordProviderMetrics("openai", "", 500, true, 0.002);
-        Mockito.verifyNoInteractions(hashOps);
+        service.recordProviderMetrics("openai", "", 500, true, 0L, 0L);
+        Mockito.verifyNoInteractions(hashOps, costEstimator);
     }
 
     @Test
@@ -138,7 +156,7 @@ class ProviderHealthScoreServiceTest {
         when(hashOps.increment(anyString(), anyString(), anyLong())).thenReturn(1L);
         when(zSetOps.add(anyString(), anyString(), anyDouble())).thenReturn(true);
 
-        service.recordProviderMetrics("openai", "gpt-4o", 1000, false, 0.005);
+        service.recordProviderMetrics("openai", "gpt-4o", 1000, false, 0L, 0L);
 
         verify(hashOps).increment(anyString(), eq("calls"), anyLong());
         Mockito.verify(hashOps, Mockito.never()).increment(anyString(), eq("success"), anyLong());

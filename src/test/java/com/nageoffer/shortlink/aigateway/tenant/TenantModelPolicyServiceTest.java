@@ -1,6 +1,7 @@
 package com.nageoffer.shortlink.aigateway.tenant;
 
 import com.nageoffer.shortlink.aigateway.config.AiGatewayProperties;
+import com.nageoffer.shortlink.aigateway.config.AiGatewayTenantProperties;
 import com.nageoffer.shortlink.aigateway.exception.AiGatewayClientException;
 import com.nageoffer.shortlink.aigateway.exception.AiGatewayErrorCode;
 import com.nageoffer.shortlink.aigateway.persistence.service.TenantConfigQueryService;
@@ -50,7 +51,7 @@ class TenantModelPolicyServiceTest {
     void shouldPreferDatabaseBackedPolicyWhenAvailable() {
         AiGatewayProperties properties = baseProperties();
         TenantConfigQueryService queryService = Mockito.mock(TenantConfigQueryService.class);
-        AiGatewayProperties.TenantModelPolicy dbPolicy = new AiGatewayProperties.TenantModelPolicy();
+        AiGatewayTenantProperties.TenantModelPolicy dbPolicy = new AiGatewayTenantProperties.TenantModelPolicy();
         dbPolicy.setEnabled(true);
         dbPolicy.setAllowedModels(Set.of("deepseek-chat"));
         dbPolicy.setModelMappings(Map.of("default", "deepseek-chat"));
@@ -68,7 +69,7 @@ class TenantModelPolicyServiceTest {
         AiGatewayProperties properties = new AiGatewayProperties();
         properties.getTenant().setEnabled(true);
 
-        AiGatewayProperties.TenantModelPolicy policy = new AiGatewayProperties.TenantModelPolicy();
+        AiGatewayTenantProperties.TenantModelPolicy policy = new AiGatewayTenantProperties.TenantModelPolicy();
         policy.setAllowedModels(Set.of("gpt-4o-mini-compatible", "gpt-4o-mini"));
         policy.setModelMappings(Map.of("default", "gpt-4o-mini-compatible"));
         policy.setDefaultModelAlias("default");

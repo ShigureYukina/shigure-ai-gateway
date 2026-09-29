@@ -42,4 +42,43 @@ class AiCacheKeyServiceTest {
 
         Assertions.assertNotEquals(tenantAKey, tenantBKey);
     }
+
+    @Test
+    void shouldIsolateKeyWhenToolsDiffer() {
+        AiCacheKeyService keyService = new AiCacheKeyService();
+        TenantContext tenantContext = new TenantContext("tenant-a", "app-a", "key-a");
+
+        AiChatCompletionReqDTO withoutTools = request("hello");
+        AiChatCompletionReqDTO withTools = request("hello");
+        withTools.getUnmapped().put("tools", List.of(java.util.Map.of("type", "function")));
+
+        // 工具不同意味着回答可能完全不同，命中同一缓存会直接产出错答
+        Assertions.assertNotEquals(
+                keyService.build(tenantContext, "openai", "gpt-4o-mini", withoutTools),
+                keyService.build(tenantContext, "openai", "gpt-4o-mini", withTools));
+    }
+
+    @Test
+    void shouldIsolateKeyWhenMessageCarriesToolCall() {
+        AiCacheKeyService keyService = new AiCacheKeyService();
+        TenantContext tenantContext = new TenantContext("tenant-a", "app-a", "key-a");
+
+        AiChatCompletionReqDTO plain = request("hello");
+        AiChatCompletionReqDTO withToolCall = request("hello");
+        withToolCall.getMessages().get(0).putUnmapped("tool_call_id", "call_1");
+
+        Assertions.assertNotEquals(
+                keyService.build(tenantContext, "openai", "gpt-4o-mini", plain),
+                keyService.build(tenantContext, "openai", "gpt-4o-mini", withToolCall));
+    }
+
+    private AiChatCompletionReqDTO request(String content) {
+        AiChatCompletionReqDTO request = new AiChatCompletionReqDTO();
+        AiChatCompletionMessage message = new AiChatCompletionMessage();
+        message.setRole("user");
+        message.setContent(content);
+        request.setModel("gpt-4o-mini");
+        request.setMessages(List.of(message));
+        return request;
+    }
 }

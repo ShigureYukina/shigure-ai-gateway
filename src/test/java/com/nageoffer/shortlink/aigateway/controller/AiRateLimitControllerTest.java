@@ -2,6 +2,8 @@ package com.nageoffer.shortlink.aigateway.controller;
 
 import com.nageoffer.shortlink.aigateway.config.AiGatewayProperties;
 import com.nageoffer.shortlink.aigateway.governance.RedisTokenQuotaService;
+import com.nageoffer.shortlink.aigateway.runtime.RuntimeConfigDomain;
+import com.nageoffer.shortlink.aigateway.runtime.RuntimeConfigPublisher;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
@@ -18,13 +20,18 @@ class AiRateLimitControllerTest {
 
     private AiGatewayProperties properties;
     private RedisTokenQuotaService redisTokenQuotaService;
+    private RuntimeConfigPublisher runtimeConfigPublisher;
     private WebTestClient webTestClient;
 
     @BeforeEach
     void setUp() {
         properties = new AiGatewayProperties();
         redisTokenQuotaService = Mockito.mock(RedisTokenQuotaService.class);
-        webTestClient = WebTestClient.bindToController(new AiRateLimitController(properties, redisTokenQuotaService)).build();
+        runtimeConfigPublisher = Mockito.mock(RuntimeConfigPublisher.class);
+        // 原样回吐 view：这样"响应里能看到刚改的值"这条断言仍然只验证 controller 自己
+        Mockito.when(runtimeConfigPublisher.save(any(), any())).thenAnswer(invocation -> Mono.just(invocation.getArgument(1)));
+        webTestClient = WebTestClient.bindToController(
+                new AiRateLimitController(properties, redisTokenQuotaService, runtimeConfigPublisher)).build();
     }
 
     @Test
@@ -54,6 +61,9 @@ class AiRateLimitControllerTest {
                 .jsonPath("$.defaultTokenQuotaPerDay").isEqualTo(654)
                 .jsonPath("$.minTokenReserve").isEqualTo(99)
                 .jsonPath("$.keyDimensions.length()").isEqualTo(2);
+
+        // 改内存之后必须交给配置中心收尾（落库 + 通知其他实例）
+        Mockito.verify(runtimeConfigPublisher).save(eq(RuntimeConfigDomain.RATE_LIMIT), any());
     }
 
     @Test

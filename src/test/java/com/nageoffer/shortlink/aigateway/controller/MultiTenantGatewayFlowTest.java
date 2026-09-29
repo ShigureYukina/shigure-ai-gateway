@@ -1,7 +1,10 @@
 package com.nageoffer.shortlink.aigateway.controller;
 
 import com.nageoffer.shortlink.aigateway.adapter.ProviderAdapter;
+import com.nageoffer.shortlink.aigateway.governance.ProviderRateLimitService;
+import com.nageoffer.shortlink.aigateway.observability.AiRequestTraceBus;
 import com.nageoffer.shortlink.aigateway.config.AiGatewayProperties;
+import com.nageoffer.shortlink.aigateway.config.AiGatewayTenantProperties;
 import com.nageoffer.shortlink.aigateway.dto.req.AiChatCompletionMessage;
 import com.nageoffer.shortlink.aigateway.dto.req.AiChatCompletionReqDTO;
 import com.nageoffer.shortlink.aigateway.config.AiGatewayTracer;
@@ -14,14 +17,19 @@ import com.nageoffer.shortlink.aigateway.governance.QuotaKeyGenerator;
 import com.nageoffer.shortlink.aigateway.governance.RedisResponseCacheService;
 import com.nageoffer.shortlink.aigateway.governance.RedisTokenQuotaService;
 import com.nageoffer.shortlink.aigateway.governance.TokenEstimator;
+import com.nageoffer.shortlink.aigateway.governance.RateLimitHeaderService;
+import com.nageoffer.shortlink.aigateway.governance.UpstreamCredentialService;
 import com.nageoffer.shortlink.aigateway.governance.UsageExtractor;
 import com.nageoffer.shortlink.aigateway.observability.AiGatewayMetricsRecorder;
 import com.nageoffer.shortlink.aigateway.observability.CostEstimator;
+import com.nageoffer.shortlink.aigateway.observability.RequestTracePublisher;
 import com.nageoffer.shortlink.aigateway.plugin.PluginChainService;
 import com.nageoffer.shortlink.aigateway.routing.AiRoutingResult;
 import com.nageoffer.shortlink.aigateway.routing.ProviderRoutingService;
+import com.nageoffer.shortlink.aigateway.routing.RoutingPlanResolver;
 import com.nageoffer.shortlink.aigateway.security.ApiKeyAuthService;
 import com.nageoffer.shortlink.aigateway.service.AiGatewayService;
+import com.nageoffer.shortlink.aigateway.service.UpstreamCallExecutor;
 import com.nageoffer.shortlink.aigateway.tenant.TenantModelPolicyService;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Assertions;
@@ -68,7 +76,7 @@ class MultiTenantGatewayFlowTest {
         ApiKeyAuthService authService = new ApiKeyAuthService(properties);
 
         WebTestClient client = WebTestClient.bindToController(new AiGatewayController(service, authService))
-                .controllerAdvice(new AiGatewayExceptionHandler())
+                .controllerAdvice(new AiGatewayExceptionHandler(new AiGatewayProperties()))
                 .build();
 
         client.post()
@@ -105,7 +113,7 @@ class MultiTenantGatewayFlowTest {
         ApiKeyAuthService authService = new ApiKeyAuthService(properties);
 
         WebTestClient client = WebTestClient.bindToController(new AiGatewayController(service, authService))
-                .controllerAdvice(new AiGatewayExceptionHandler())
+                .controllerAdvice(new AiGatewayExceptionHandler(new AiGatewayProperties()))
                 .build();
 
         client.post()
@@ -160,7 +168,7 @@ class MultiTenantGatewayFlowTest {
         ApiKeyAuthService authService = new ApiKeyAuthService(properties);
 
         WebTestClient client = WebTestClient.bindToController(new AiGatewayController(service, authService))
-                .controllerAdvice(new AiGatewayExceptionHandler())
+                .controllerAdvice(new AiGatewayExceptionHandler(new AiGatewayProperties()))
                 .build();
 
         client.post()
@@ -183,13 +191,22 @@ class MultiTenantGatewayFlowTest {
                                             RedisResponseCacheService responseCacheService,
                                             RedisTokenQuotaService quotaService,
                                             AiGatewayMetricsRecorder metricsRecorder) {
-        return new AiGatewayService(
+        RequestTracePublisher tracePublisher = new RequestTracePublisher(Mockito.mock(AiRequestTraceBus.class));
+        UpstreamCallExecutor upstreamCallExecutor = new UpstreamCallExecutor(
                 WebClient.builder().build(),
-                providerRoutingService,
-                new TenantModelPolicyService(properties),
                 List.<ProviderAdapter>of(),
-                metricsRecorder,
+                Mockito.mock(ReactiveCircuitBreakerFactory.class),
+                Mockito.mock(UpstreamCredentialService.class),
+                Mockito.mock(PluginChainService.class),
                 Mockito.mock(AiSafetyGuard.class),
+                new ProviderRateLimitService(properties),
+                providerRoutingService,
+                properties,
+                tracePublisher
+        );
+        return new AiGatewayService(
+                new RoutingPlanResolver(properties, providerRoutingService, new TenantModelPolicyService(properties)),
+                metricsRecorder,
                 quotaService,
                 Mockito.mock(UsageExtractor.class),
                 new AiCacheControlService(properties),
@@ -197,10 +214,11 @@ class MultiTenantGatewayFlowTest {
                 new AiCacheStatsService(),
                 responseCacheService,
                 Mockito.mock(NoopSemanticCacheService.class),
-                Mockito.mock(PluginChainService.class),
                 properties,
-                Mockito.mock(ReactiveCircuitBreakerFactory.class),
-                Mockito.mock(AiGatewayTracer.class)
+                Mockito.mock(AiGatewayTracer.class),
+                new RateLimitHeaderService(),
+                tracePublisher,
+                upstreamCallExecutor
         );
     }
 
@@ -217,14 +235,14 @@ class MultiTenantGatewayFlowTest {
         properties.getObservability().setCacheEventMetricsEnabled(true);
         properties.getObservability().setQuotaEventMetricsEnabled(true);
 
-        AiGatewayProperties.TenantApiKeyCredential credential = new AiGatewayProperties.TenantApiKeyCredential();
+        AiGatewayTenantProperties.TenantApiKeyCredential credential = new AiGatewayTenantProperties.TenantApiKeyCredential();
         credential.setApiKey("demo-platform-key");
         credential.setTenantId("demo-tenant");
         credential.setAppId("demo-app");
         credential.setKeyId("demo-key");
         properties.getTenant().getApiKeys().put("demo-key", credential);
 
-        AiGatewayProperties.TenantModelPolicy policy = new AiGatewayProperties.TenantModelPolicy();
+        AiGatewayTenantProperties.TenantModelPolicy policy = new AiGatewayTenantProperties.TenantModelPolicy();
         policy.getAllowedModels().add("gpt-4o-mini-compatible");
         policy.getModelMappings().put("default", "gpt-4o-mini-compatible");
         policy.setDefaultModelAlias("default");

@@ -1,0 +1,121 @@
+{
+  "base_url": "http://aigw-gateway:8010",
+  "scenarios": [
+    {
+      "scenario": "non_stream_success",
+      "requests": 600,
+      "concurrency": 50,
+      "success": 600,
+      "failure": 0,
+      "success_rate": 1.0,
+      "throughput_rps": 1161.62,
+      "wall_seconds": 0.517,
+      "latency_ms": {
+        "avg": 39.27,
+        "p50": 38.16,
+        "p95": 43.2,
+        "p99": 63.12,
+        "max": 67.33
+      },
+      "first_byte_ms": {
+        "avg": null,
+        "p50": null,
+        "p95": null,
+        "max": null
+      },
+      "status_counts": {
+        "200": 600
+      },
+      "sample_errors": []
+    },
+    {
+      "scenario": "stream_success",
+      "requests": 150,
+      "concurrency": 5,
+      "success": 150,
+      "failure": 0,
+      "success_rate": 1.0,
+      "throughput_rps": 120.81,
+      "wall_seconds": 1.242,
+      "latency_ms": {
+        "avg": 41.27,
+        "p50": 41.11,
+        "p95": 43.42,
+        "p99": 45.42,
+        "max": 45.91
+      },
+      "first_byte_ms": {
+        "avg": 22.27,
+        "p50": 22.17,
+        "p95": 23.62,
+        "max": 24.26
+      },
+      "status_counts": {
+        "200": 150
+      },
+      "sample_errors": []
+    },
+    {
+      "scenario": "missing_api_key_unauthorized",
+      "requests": 150,
+      "concurrency": 5,
+      "success": 0,
+      "failure": 150,
+      "success_rate": 0.0,
+      "throughput_rps": 2005.26,
+      "wall_seconds": 0.075,
+      "latency_ms": {
+        "avg": 2.17,
+        "p50": 2.1,
+        "p95": 2.98,
+        "p99": 3.61,
+        "max": 4.08
+      },
+      "first_byte_ms": {
+        "avg": null,
+        "p50": null,
+        "p95": null,
+        "max": null
+      },
+      "status_counts": {
+        "401": 150
+      },
+      "sample_errors": [
+        "{\"status\":401,\"message\":\"缺少平台 API Key\"}",
+        "{\"status\":401,\"message\":\"缺少平台 API Key\"}",
+        "{\"status\":401,\"message\":\"缺少平台 API Key\"}"
+      ]
+    },
+    {
+      "scenario": "forbidden_model_rejected",
+      "requests": 150,
+      "concurrency": 5,
+      "success": 0,
+      "failure": 150,
+      "success_rate": 0.0,
+      "throughput_rps": 2076.58,
+      "wall_seconds": 0.072,
+      "latency_ms": {
+        "avg": 2.05,
+        "p50": 2.03,
+        "p95": 2.86,
+        "p99": 3.4,
+        "max": 3.71
+      },
+      "first_byte_ms": {
+        "avg": null,
+        "p50": null,
+        "p95": null,
+        "max": null
+      },
+      "status_counts": {
+        "403": 150
+      },
+      "sample_errors": [
+        "{\"status\":403,\"message\":\"当前租户无权访问模型: claude-3-5-sonnet-latest\"}",
+        "{\"status\":403,\"message\":\"当前租户无权访问模型: claude-3-5-sonnet-latest\"}",
+        "{\"status\":403,\"message\":\"当前租户无权访问模型: claude-3-5-sonnet-latest\"}"
+      ]
+    }
+  ]
+}

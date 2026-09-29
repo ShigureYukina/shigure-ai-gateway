@@ -1,13 +1,19 @@
 package com.nageoffer.shortlink.aigateway.persistence.service;
 
 import com.nageoffer.shortlink.aigateway.config.AiGatewayProperties;
+import com.nageoffer.shortlink.aigateway.crypto.AesGcmSecretCipher;
+import com.nageoffer.shortlink.aigateway.crypto.MasterKey;
+import com.nageoffer.shortlink.aigateway.crypto.SecretCipher;
+import com.nageoffer.shortlink.aigateway.crypto.SecretHasher;
 import com.nageoffer.shortlink.aigateway.persistence.entity.AiModelPriceEntity;
+import com.nageoffer.shortlink.aigateway.persistence.entity.ProviderCredentialEntity;
 import com.nageoffer.shortlink.aigateway.persistence.entity.TenantAppEntity;
 import com.nageoffer.shortlink.aigateway.persistence.entity.TenantApiKeyEntity;
 import com.nageoffer.shortlink.aigateway.persistence.entity.TenantEntity;
 import com.nageoffer.shortlink.aigateway.persistence.entity.TenantModelPolicyEntity;
 import com.nageoffer.shortlink.aigateway.persistence.entity.TenantQuotaPolicyEntity;
 import com.nageoffer.shortlink.aigateway.persistence.repository.AiModelPriceRepository;
+import com.nageoffer.shortlink.aigateway.persistence.repository.ProviderCredentialRepository;
 import com.nageoffer.shortlink.aigateway.persistence.repository.TenantAppRepository;
 import com.nageoffer.shortlink.aigateway.persistence.repository.TenantApiKeyRepository;
 import com.nageoffer.shortlink.aigateway.persistence.repository.TenantRepository;
@@ -18,12 +24,15 @@ import com.nageoffer.shortlink.aigateway.persistence.repository.TenantQuotaPolic
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
 import reactor.core.publisher.Mono;
 import reactor.core.publisher.Flux;
 
+import java.util.Base64;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
@@ -40,6 +49,7 @@ class TenantConfigManagementServiceTest {
     private TenantModelMappingRepository tenantModelMappingRepository;
     private TenantQuotaPolicyRepository tenantQuotaPolicyRepository;
     private AiModelPriceRepository aiModelPriceRepository;
+    private ProviderCredentialRepository providerCredentialRepository;
     private TenantConfigManagementService service;
 
     @BeforeEach
@@ -56,6 +66,8 @@ class TenantConfigManagementServiceTest {
         tenantModelMappingRepository = Mockito.mock(TenantModelMappingRepository.class);
         tenantQuotaPolicyRepository = Mockito.mock(TenantQuotaPolicyRepository.class);
         aiModelPriceRepository = Mockito.mock(AiModelPriceRepository.class);
+        providerCredentialRepository = Mockito.mock(ProviderCredentialRepository.class);
+        Mockito.when(providerCredentialRepository.deleteAllByTenantId(Mockito.anyString())).thenReturn(Mono.empty());
         service = new TenantConfigManagementService(
                 properties,
                 tenantConfigQueryService,
@@ -66,8 +78,36 @@ class TenantConfigManagementServiceTest {
                 tenantModelAllowedRepository,
                 tenantModelMappingRepository,
                 tenantQuotaPolicyRepository,
-                aiModelPriceRepository
+                aiModelPriceRepository,
+                providerCredentialRepository
         );
+    }
+
+    /**
+     * 同一个对象图，只把加解密能力换成"开着"的。
+     */
+    private TenantConfigManagementService encryptedService(SecretCipher cipher, SecretHasher hasher) {
+        return new TenantConfigManagementService(
+                properties,
+                tenantConfigQueryService,
+                tenantRepository,
+                tenantAppRepository,
+                tenantApiKeyRepository,
+                tenantModelPolicyRepository,
+                tenantModelAllowedRepository,
+                tenantModelMappingRepository,
+                tenantQuotaPolicyRepository,
+                aiModelPriceRepository,
+                providerCredentialRepository,
+                cipher,
+                hasher
+        );
+    }
+
+    private static MasterKey masterKey() {
+        byte[] bytes = new byte[32];
+        java.util.Arrays.fill(bytes, (byte) 7);
+        return MasterKey.fromBase64(Base64.getEncoder().encodeToString(bytes));
     }
 
     @Test
@@ -93,6 +133,62 @@ class TenantConfigManagementServiceTest {
         Assertions.assertEquals("tenant-a", result.get("tenantId"));
         Assertions.assertEquals("app-a", result.get("appId"));
         Mockito.verify(tenantConfigQueryService).refreshFromDatabaseReactive();
+    }
+
+    /**
+     * 配了主密钥时的写路径：库里必须是密文 + 查找哈希。
+     * 明文落库会让整条加密链路形同虚设；hash 缺失则这个 Key 再也查不出来。
+     */
+    @Test
+    void shouldStoreApiKeyAsCiphertextWithLookupHash() {
+        SecretCipher cipher = AesGcmSecretCipher.of(masterKey());
+        SecretHasher hasher = SecretHasher.of(masterKey());
+        TenantConfigManagementService encrypted = encryptedService(cipher, hasher);
+        String hash = hasher.hmac("secret-a");
+        Mockito.when(tenantApiKeyRepository.findByApiKeyHash(hash)).thenReturn(Mono.empty());
+        // 哈希查不到时还会回退一次明文查（给"加密刚开、SecretMigrationRunner 还没回填完"的窗口兜底）
+        Mockito.when(tenantApiKeyRepository.findByApiKey("secret-a")).thenReturn(Mono.empty());
+        Mockito.when(tenantApiKeyRepository.save(any(TenantApiKeyEntity.class)))
+                .thenAnswer(invocation -> Mono.just(invocation.getArgument(0)));
+
+        Map<String, Object> result = encrypted.upsertApiKey(Map.of(
+                "tenantId", "tenant-a",
+                "appId", "app-a",
+                "keyId", "key-a",
+                "apiKey", "secret-a",
+                "enabled", true
+        )).block();
+
+        ArgumentCaptor<TenantApiKeyEntity> saved = ArgumentCaptor.forClass(TenantApiKeyEntity.class);
+        Mockito.verify(tenantApiKeyRepository).save(saved.capture());
+        Assertions.assertTrue(AesGcmSecretCipher.isEncrypted(saved.getValue().getApiKey()),
+                "库里必须是 enc:v1: 密文");
+        Assertions.assertEquals("secret-a", cipher.decrypt(saved.getValue().getApiKey()));
+        Assertions.assertEquals(hash, saved.getValue().getApiKeyHash());
+        // 查找入口是确定性哈希：密文随机 IV，按明文根本查不到已加密的行
+        Mockito.verify(tenantApiKeyRepository).findByApiKeyHash(hash);
+        // 响应里既没有明文也没有密文
+        Assertions.assertEquals(Set.of("tenantId", "appId", "keyId", "enabled"), result.keySet());
+    }
+
+    /**
+     * 掩码要基于<b>解密后的明文</b>：直接掩码存值的话回显的是密文前 4 位（恒为 {@code enc:}），
+     * 既没有排障价值，又把一个已加密的值又漏了一次。
+     */
+    @Test
+    void shouldMaskDecryptedPlaintextInsteadOfCiphertext() {
+        TenantConfigManagementService encrypted = encryptedService(
+                AesGcmSecretCipher.of(masterKey()), SecretHasher.of(masterKey()));
+        Mockito.when(providerCredentialRepository.findByTenantIdAndProvider("tenant-a", "openai"))
+                .thenReturn(Mono.empty());
+        Mockito.when(providerCredentialRepository.save(any(ProviderCredentialEntity.class)))
+                .thenAnswer(invocation -> Mono.just(invocation.getArgument(0)));
+
+        Map<String, Object> result = encrypted.upsertProviderCredential("tenant-a", "openai",
+                Map.of("apiKey", "sk-upstream-1234")).block();
+
+        Assertions.assertEquals("sk-u***1234", result.get("apiKeyMasked"));
+        Assertions.assertFalse(String.valueOf(result.get("apiKeyMasked")).contains(AesGcmSecretCipher.PREFIX));
     }
 
     @Test
@@ -207,7 +303,9 @@ class TenantConfigManagementServiceTest {
 
         Assertions.assertEquals(true, tenantDelete.get("deleted"));
         Assertions.assertEquals("app-a", appDelete.get("appId"));
-        Assertions.assertEquals("secret-a", keyDelete.get("apiKey"));
+        // 删除响应刻意不再回显被删的 Key：那个 Map 会进日志与审计明细
+        Assertions.assertEquals(true, keyDelete.get("deleted"));
+        Assertions.assertFalse(keyDelete.containsKey("apiKey"));
         Assertions.assertEquals("tenant-a", policyDelete.get("tenantId"));
         Assertions.assertEquals("tenant-a", quotaDelete.get("tenantId"));
         Assertions.assertEquals("gpt-4o-mini", priceDelete.get("model"));

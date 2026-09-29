@@ -1,6 +1,7 @@
 package com.nageoffer.shortlink.aigateway.governance;
 
 import com.nageoffer.shortlink.aigateway.config.AiGatewayProperties;
+import com.nageoffer.shortlink.aigateway.config.AiGatewayTenantProperties;
 import com.nageoffer.shortlink.aigateway.dto.req.AiChatCompletionMessage;
 import com.nageoffer.shortlink.aigateway.dto.req.AiChatCompletionReqDTO;
 import com.nageoffer.shortlink.aigateway.observability.AiGatewayMetricsRecorder;
@@ -34,9 +35,8 @@ class RedisTokenQuotaServiceTest {
     void shouldIncrementWhenActualUsageIsHigherThanReserved() {
         AiGatewayProperties properties = buildProperties();
         ReactiveStringRedisTemplate redisTemplate = Mockito.mock(ReactiveStringRedisTemplate.class);
-        ReactiveValueOperations<String, String> valueOperations = Mockito.mock(ReactiveValueOperations.class);
-        Mockito.when(redisTemplate.opsForValue()).thenReturn(valueOperations);
-        Mockito.when(valueOperations.increment(anyString(), anyLong())).thenReturn(Mono.just(1L));
+        Mockito.when(redisTemplate.execute(ArgumentMatchers.<RedisScript<List>>any(), anyList(), anyList()))
+                .thenReturn(Flux.just(List.of(130L, 130L, 130L)));
 
         RedisTokenQuotaService service = buildService(redisTemplate, properties);
         QuotaPreCheckContext context = QuotaPreCheckContext.builder()
@@ -46,12 +46,16 @@ class RedisTokenQuotaServiceTest {
                 .monthKey("short-link:ai-gateway:quota:month:2026-01:k")
                 .build();
 
-        StepVerifier.create(service.adjustByActualUsage(context, 130L)).verifyComplete();
+        // 补扣与回传结算后用量合并到同一次往返，避免每请求多发三条 INCRBY
+        StepVerifier.create(service.adjustByActualUsage(context, 130L))
+                .expectNextMatches(settleResult -> settleResult.minuteUsed() == 130L
+                        && settleResult.dayUsed() == 130L
+                        && settleResult.monthUsed() == 130L)
+                .verifyComplete();
 
-        Mockito.verify(valueOperations).increment(eq(context.getMinuteKey()), eq(30L));
-        Mockito.verify(valueOperations).increment(eq(context.getDayKey()), eq(30L));
-        Mockito.verify(valueOperations).increment(eq(context.getMonthKey()), eq(30L));
-        Mockito.verify(redisTemplate, Mockito.never()).execute(ArgumentMatchers.<RedisScript<Long>>any(), anyList(), anyList());
+        Mockito.verify(redisTemplate).execute(ArgumentMatchers.<RedisScript<List>>any(),
+                eq(List.of(context.getMinuteKey(), context.getDayKey(), context.getMonthKey())),
+                eq(List.of("30")));
     }
 
     @Test
@@ -61,8 +65,8 @@ class RedisTokenQuotaServiceTest {
         ReactiveStringRedisTemplate redisTemplate = Mockito.mock(ReactiveStringRedisTemplate.class);
         ReactiveValueOperations<String, String> valueOperations = Mockito.mock(ReactiveValueOperations.class);
         Mockito.when(redisTemplate.opsForValue()).thenReturn(valueOperations);
-        Mockito.when(redisTemplate.execute(ArgumentMatchers.<RedisScript<Long>>any(), anyList(), anyList()))
-                .thenReturn(Flux.just(1L));
+        Mockito.when(redisTemplate.execute(ArgumentMatchers.<RedisScript<List>>any(), anyList(), anyList()))
+                .thenReturn(Flux.just(List.of(80L, 80L, 80L)));
 
         RedisTokenQuotaService service = buildService(redisTemplate, properties);
         QuotaPreCheckContext context = QuotaPreCheckContext.builder()
@@ -72,11 +76,13 @@ class RedisTokenQuotaServiceTest {
                 .monthKey("short-link:ai-gateway:quota:month:2026-01:k")
                 .build();
 
-        StepVerifier.create(service.adjustByActualUsage(context, 80L)).verifyComplete();
+        StepVerifier.create(service.adjustByActualUsage(context, 80L))
+                .expectNextMatches(settleResult -> settleResult.minuteUsed() == 80L)
+                .verifyComplete();
 
-        Mockito.verify(redisTemplate).execute(ArgumentMatchers.<RedisScript<Long>>any(),
+        Mockito.verify(redisTemplate).execute(ArgumentMatchers.<RedisScript<List>>any(),
                 eq(List.of(context.getMinuteKey(), context.getDayKey(), context.getMonthKey())),
-                eq(List.of("40")));
+                eq(List.of("-40")));
         Mockito.verify(valueOperations, Mockito.never()).increment(anyString(), anyLong());
     }
 
@@ -94,7 +100,7 @@ class RedisTokenQuotaServiceTest {
         StepVerifier.create(service.adjustByActualUsage(QuotaPreCheckContext.builder().reservedTokens(0L).build(), 100L)).verifyComplete();
         StepVerifier.create(service.adjustByActualUsage(QuotaPreCheckContext.builder().reservedTokens(100L).build(), 0L)).verifyComplete();
 
-        Mockito.verify(redisTemplate, Mockito.never()).execute(ArgumentMatchers.<RedisScript<Long>>any(), anyList(), anyList());
+        Mockito.verify(redisTemplate, Mockito.never()).execute(ArgumentMatchers.<RedisScript<List>>any(), anyList(), anyList());
         Mockito.verify(valueOperations, Mockito.never()).increment(anyString(), anyLong());
     }
 
@@ -163,7 +169,7 @@ class RedisTokenQuotaServiceTest {
     @SuppressWarnings("unchecked")
     void shouldUseTenantScopedQuotaAndQuotaKey() {
         AiGatewayProperties properties = buildProperties();
-        AiGatewayProperties.TenantQuotaPolicy quotaPolicy = new AiGatewayProperties.TenantQuotaPolicy();
+        AiGatewayTenantProperties.TenantQuotaPolicy quotaPolicy = new AiGatewayTenantProperties.TenantQuotaPolicy();
         quotaPolicy.setTokenQuotaPerMinute(200L);
         quotaPolicy.setTokenQuotaPerDay(1000L);
         quotaPolicy.setTokenQuotaPerMonth(20000L);
@@ -199,7 +205,7 @@ class RedisTokenQuotaServiceTest {
     @SuppressWarnings("unchecked")
     void shouldRejectWhenTenantMonthQuotaExceeded() {
         AiGatewayProperties properties = buildProperties();
-        AiGatewayProperties.TenantQuotaPolicy quotaPolicy = new AiGatewayProperties.TenantQuotaPolicy();
+        AiGatewayTenantProperties.TenantQuotaPolicy quotaPolicy = new AiGatewayTenantProperties.TenantQuotaPolicy();
         quotaPolicy.setTokenQuotaPerMinute(1000L);
         quotaPolicy.setTokenQuotaPerDay(10000L);
         quotaPolicy.setTokenQuotaPerMonth(10L);
