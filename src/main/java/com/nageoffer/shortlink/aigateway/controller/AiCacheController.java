@@ -2,6 +2,8 @@ package com.nageoffer.shortlink.aigateway.controller;
 
 import com.nageoffer.shortlink.aigateway.config.AiGatewayProperties;
 import com.nageoffer.shortlink.aigateway.governance.AiCacheStatsService;
+import com.nageoffer.shortlink.aigateway.runtime.RuntimeConfigDomain;
+import com.nageoffer.shortlink.aigateway.runtime.RuntimeConfigPublisher;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
@@ -11,6 +13,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import reactor.core.publisher.Mono;
 
 import java.time.Duration;
 import java.util.Map;
@@ -25,6 +28,8 @@ public class AiCacheController {
 
     private final AiCacheStatsService aiCacheStatsService;
 
+    private final RuntimeConfigPublisher runtimeConfigPublisher;
+
     @Operation(summary = "查询缓存配置")
     @GetMapping("/config")
     public Map<String, Object> config() {
@@ -35,9 +40,10 @@ public class AiCacheController {
         );
     }
 
-    @Operation(summary = "更新缓存配置")
+    @Operation(summary = "更新缓存配置",
+            description = "运行时更新缓存配置；响应里的 persisted=false 表示当前实例未接持久化，仅本实例生效")
     @PostMapping("/config")
-    public Map<String, Object> update(@RequestBody Map<String, Object> requestParam) {
+    public Mono<Map<String, Object>> update(@RequestBody Map<String, Object> requestParam) {
         Object enabled = requestParam.get("enabled");
         if (enabled instanceof Boolean enabledValue) {
             properties.getCache().setEnabled(enabledValue);
@@ -56,7 +62,7 @@ public class AiCacheController {
             } catch (NumberFormatException ignored) {
             }
         }
-        return config();
+        return runtimeConfigPublisher.save(RuntimeConfigDomain.CACHE, config());
     }
 
     @Operation(summary = "查询缓存统计")

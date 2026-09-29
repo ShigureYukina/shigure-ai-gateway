@@ -18,6 +18,7 @@
         <button class="nav-btn active" data-view="chat">网关调试</button>
         <button class="nav-btn" data-view="models">模型发现</button>
         <button class="nav-btn" data-view="metrics">模型观测</button>
+        <button class="nav-btn" data-view="trace">实时链路</button>
         <button class="nav-btn" data-view="ratelimit">限流配额</button>
         <button class="nav-btn" data-view="routing">路由策略</button>
         <button class="nav-btn" data-view="cacheab">缓存与灰度</button>
@@ -174,6 +175,27 @@
           <article class="metric-card"><h3>成本</h3><p id="m-cost">--</p></article>
         </div>
         <div id="metrics-status" class="status">等待查询</div>
+      </section>
+
+      <section class="panel" id="view-trace">
+        <header class="panel-header">
+          <h2>实时链路</h2>
+          <p>SSE 实时推送每一跳：路由 → 缓存 → 配额 → 上游 → 首字 → 收尾。切走本页会自动断开连接。</p>
+        </header>
+        <div class="card form-card compact">
+          <div class="field-inline">
+            <div class="field grow">
+              <label for="trace-filter">按 requestId 过滤</label>
+              <input id="trace-filter" type="text" placeholder="留空显示全部" />
+            </div>
+          </div>
+          <div class="actions">
+            <button id="trace-toggle" class="btn primary" type="button">开始监听</button>
+            <button id="trace-clear" class="btn" type="button">清空</button>
+          </div>
+        </div>
+        <div id="trace-status" class="status">未连接</div>
+        <div id="trace-list" class="trace-list empty">等待请求...</div>
       </section>
 
       <section class="panel" id="view-ratelimit">

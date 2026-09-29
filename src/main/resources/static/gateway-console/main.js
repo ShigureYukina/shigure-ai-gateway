@@ -12,6 +12,8 @@ const state = {
   unlocked: false,
   currentRole: "unknown",
   modelsAll: [],
+  traceAbort: null,
+  traceEvents: [],
 };
 
 const ACCESS_SESSION_KEY = "gateway-console-unlocked";
@@ -164,6 +166,14 @@ function switchView(view) {
   document.querySelectorAll(".panel").forEach((panel) => {
     panel.classList.toggle("active", panel.id === `view-${view}`);
   });
+  if (view === "trace") {
+    // 进页面先清空再铺最近记录，避免和上一轮的残留混在一起
+    state.traceEvents = [];
+    renderTrace();
+    loadRecentTrace();
+  } else {
+    stopTrace();
+  }
 }
 
 async function requestJson(url, init = {}) {
@@ -1253,6 +1263,153 @@ function bindBillingActions() {
   document.getElementById("billing-form").addEventListener("submit", exportBilling);
 }
 
+function traceStatusClass(status) {
+  if (status === "error") return "error";
+  if (status === "miss") return "miss";
+  if (status === "cancelled") return "cancelled";
+  if (status === "hit") return "hit";
+  return status === "ok" ? "ok" : "";
+}
+
+function renderTrace() {
+  const list = document.getElementById("trace-list");
+  if (!list) return;
+  const filter = document.getElementById("trace-filter").value.trim();
+  const events = filter ? state.traceEvents.filter((event) => event.requestId === filter) : state.traceEvents;
+  if (!events.length) {
+    list.classList.add("empty");
+    list.textContent = state.traceEvents.length ? "没有匹配的 requestId" : "等待请求...";
+    return;
+  }
+  list.classList.remove("empty");
+
+  const groups = new Map();
+  events.forEach((event) => {
+    const key = event.requestId || "-";
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(event);
+  });
+
+  list.innerHTML = [...groups.entries()]
+    .reverse()
+    .map(([requestId, items]) => {
+      const head = items[0];
+      const stages = items
+        .map(
+          (item) => `<li class="trace-stage">
+            <span class="trace-badge ${traceStatusClass(item.status)}">${item.stage}</span>
+            <span class="trace-detail">${item.provider || "-"} / ${item.model || "-"}</span>
+            <span class="trace-meta">${item.latencyMillis == null ? "" : item.latencyMillis + "ms"}${item.detail ? " · " + item.detail : ""}</span>
+          </li>`
+        )
+        .join("");
+      return `<article class="trace-item">
+        <header>
+          <strong>${requestId}</strong>
+          <span class="trace-meta">${head.stream ? "stream" : "sync"} · ${new Date(head.timestamp || Date.now()).toLocaleTimeString()}</span>
+        </header>
+        <ul>${stages}</ul>
+      </article>`;
+    })
+    .join("");
+}
+
+function appendTrace(event) {
+  state.traceEvents.push(event);
+  if (state.traceEvents.length > 400) state.traceEvents.shift();
+  renderTrace();
+}
+
+async function loadRecentTrace() {
+  try {
+    const data = await requestJson("/v1/trace/recent?limit=50");
+    (data.events || []).forEach((event) => state.traceEvents.push(event));
+    renderTrace();
+  } catch (error) {
+    setStatus(document.getElementById("trace-status"), `加载近期链路失败：${error.message}`, "warn");
+  }
+}
+
+function handleTraceChunk(chunk) {
+  // SSE 事件块以空行分隔；心跳是注释行（":keep-alive"），这里直接跳过
+  const dataLines = chunk
+    .split("\n")
+    .filter((line) => line.startsWith("data:"))
+    .map((line) => line.slice(5).trim());
+  if (!dataLines.length) return;
+  try {
+    appendTrace(JSON.parse(dataLines.join("")));
+  } catch (error) {
+    // 半个事件包丢弃即可，下一轮会补齐
+  }
+}
+
+async function startTrace() {
+  if (state.traceAbort) return;
+  const statusEl = document.getElementById("trace-status");
+  const toggle = document.getElementById("trace-toggle");
+  const controller = new AbortController();
+  state.traceAbort = controller;
+  toggle.textContent = "停止监听";
+  try {
+    // 用 fetch 而不是 EventSource：控制台鉴权走 X-Console-Token 请求头，EventSource 发不了自定义头
+    const response = await fetch("/v1/trace/stream", {
+      headers: buildHeaders({ Accept: "text/event-stream" }),
+      signal: controller.signal,
+    });
+    if (!response.ok || !response.body) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    setStatus(statusEl, "监听中…", "ok");
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const chunks = buffer.split("\n\n");
+      buffer = chunks.pop() || "";
+      chunks.forEach(handleTraceChunk);
+    }
+    setStatus(statusEl, "连接已结束", "warn");
+  } catch (error) {
+    if (error.name !== "AbortError") {
+      setStatus(statusEl, `连接失败：${error.message}`, "error");
+    }
+  } finally {
+    state.traceAbort = null;
+    toggle.textContent = "开始监听";
+  }
+}
+
+function stopTrace() {
+  if (state.traceAbort) {
+    state.traceAbort.abort();
+    state.traceAbort = null;
+  }
+  const toggle = document.getElementById("trace-toggle");
+  if (toggle && toggle.textContent === "停止监听") {
+    toggle.textContent = "开始监听";
+    setStatus(document.getElementById("trace-status"), "已停止", "warn");
+  }
+}
+
+function bindTraceActions() {
+  document.getElementById("trace-toggle").addEventListener("click", () => {
+    if (state.traceAbort) {
+      stopTrace();
+    } else {
+      startTrace();
+    }
+  });
+  document.getElementById("trace-clear").addEventListener("click", () => {
+    state.traceEvents = [];
+    renderTrace();
+  });
+  document.getElementById("trace-filter").addEventListener("input", renderTrace);
+}
+
 function bindNavigation() {
   document.querySelectorAll(".nav-btn").forEach((btn) => {
     btn.addEventListener("click", () => switchView(btn.dataset.view));
@@ -1270,6 +1427,7 @@ function init() {
   bindChatActions();
   bindModelsActions();
   bindMetricsActions();
+  bindTraceActions();
   bindRateLimitActions();
   bindRoutingActions();
   bindCacheAbActions();

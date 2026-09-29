@@ -1,6 +1,8 @@
 package com.nageoffer.shortlink.aigateway.controller;
 
 import com.nageoffer.shortlink.aigateway.config.AiGatewayProperties;
+import com.nageoffer.shortlink.aigateway.runtime.RuntimeConfigDomain;
+import com.nageoffer.shortlink.aigateway.runtime.RuntimeConfigPublisher;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
@@ -9,7 +11,9 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import reactor.core.publisher.Mono;
 
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 @RestController
@@ -20,16 +24,19 @@ public class AiPluginController {
 
     private final AiGatewayProperties properties;
 
-    @Operation(summary = "切换插件启停", description = "按插件名在运行时启用/禁用")
+    private final RuntimeConfigPublisher runtimeConfigPublisher;
+
+    @Operation(summary = "切换插件启停",
+            description = "按插件名在运行时启用/禁用；响应里的 persisted=false 表示仅本实例生效")
     @PostMapping("/toggle")
-    public Map<String, Object> toggle(@RequestParam("name") String name,
-                                      @RequestParam("enabled") boolean enabled) {
+    public Mono<Map<String, Object>> toggle(@RequestParam("name") String name,
+                                            @RequestParam("enabled") boolean enabled) {
         properties.getPlugin().getPluginEnabledMap().put(name, enabled);
-        return Map.of(
-                "name", name,
-                "enabled", enabled,
-                "pluginEnabledMap", properties.getPlugin().getPluginEnabledMap()
-        );
+        Map<String, Object> view = new LinkedHashMap<>();
+        view.put("name", name);
+        view.put("enabled", enabled);
+        view.put("pluginEnabledMap", new LinkedHashMap<>(properties.getPlugin().getPluginEnabledMap()));
+        return runtimeConfigPublisher.save(RuntimeConfigDomain.PLUGIN, view);
     }
 
     @Operation(summary = "获取插件配置", description = "返回全局插件、路由插件与启停状态")

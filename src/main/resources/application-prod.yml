@@ -28,13 +28,26 @@ short-link:
       cache-event-metrics-enabled: true
       quota-event-metrics-enabled: true
     security:
-      enabled: true
+      # prod 必须开鉴权（ProductionSecurityPropertiesValidator 也会强制校验），
+      # 留环境变量口子只为了紧急情况下能临时关停，正常不要用。
+      enabled: ${AI_GATEWAY_SECURITY_ENABLED:true}
       jwt-secret: ${AI_GATEWAY_JWT_SECRET}
       jwt-issuer: ${AI_GATEWAY_JWT_ISSUER:ai-gateway-console}
       users:
+        # prod 的口令必须是 {bcrypt} 前缀的哈希（ProductionSecurityPropertiesValidator 会拒绝明文）；
+        # 生成方式见 security/PasswordEncoderSupport.encode(...)，别把明文写进环境变量。
         admin:
           password: ${AI_GATEWAY_ADMIN_PASSWORD}
           role: admin
         viewer:
           password: ${AI_GATEWAY_VIEWER_PASSWORD}
           role: viewer
+      secret:
+        # prod 必须配主密钥（ProductionSecurityPropertiesValidator 会拒绝启动），
+        # 缺了就等于"以为加密了、其实写的是明文"。生成：openssl rand -base64 32
+        master-key: ${AI_GATEWAY_MASTER_KEY:}
+      ssrf:
+        # prod 默认硬拒私网/回环：上游只可能是公网 LLM 服务。
+        # 注意环境变量优先级高于本文件，on-prem 部署（上游是 VPC 内的 Ollama/vLLM）需要显式设
+        # AI_GATEWAY_SSRF_ALLOW_PRIVATE=true 才能放行 —— 这是一次有记录、要人工知情的选择。
+        allow-private-addresses: false

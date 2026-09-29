@@ -6,7 +6,6 @@ import lombok.Data;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 import java.time.Duration;
-import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -14,6 +13,18 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+/**
+ * AI 网关配置门面：{@code short-link.ai-gateway.*} 的唯一绑定入口。
+ * <p>
+ * 四个体量较大的域（tenant / security / routing / sync）已拆到各自的属性组类，
+ * 本类只保留字段声明与 yml 键位，键名逐字未变，注入点与调用方均不受影响。
+ *
+ * @see AiGatewayTenantProperties
+ * @see AiGatewaySecurityProperties
+ * @see AiGatewayRoutingProperties
+ * @see AiGatewaySyncProperties
+ * @see AiGatewayRuntimeConfigProperties
+ */
 @Data
 @ConfigurationProperties(prefix = "short-link.ai-gateway")
 public class AiGatewayProperties {
@@ -40,13 +51,31 @@ public class AiGatewayProperties {
     private Observability observability = new Observability();
 
     @Valid
-    private Routing routing = new Routing();
+    private AiGatewayRoutingProperties routing = new AiGatewayRoutingProperties();
 
     @Valid
-    private Security security = new Security();
+    private AiGatewaySecurityProperties security = new AiGatewaySecurityProperties();
 
     @Valid
-    private Tenant tenant = new Tenant();
+    private AiGatewayTenantProperties tenant = new AiGatewayTenantProperties();
+
+    /**
+     * 上游元数据同步：模型价格与模型清单。
+     */
+    @Valid
+    private AiGatewaySyncProperties sync = new AiGatewaySyncProperties();
+
+    /**
+     * 运行时配置中心：把控制台能改的那几个域落库并同步到所有实例。
+     */
+    @Valid
+    private AiGatewayRuntimeConfigProperties runtimeConfig = new AiGatewayRuntimeConfigProperties();
+
+    /**
+     * 主动探测：定时探活各渠道，连续失败自动禁用、恢复后自动放回候选集。
+     */
+    @Valid
+    private AiGatewayProbeProperties probe = new AiGatewayProbeProperties();
 
     @Data
     public static class Upstream {
@@ -56,7 +85,84 @@ public class AiGatewayProperties {
 
         private Map<String, String> providerBaseUrl = new HashMap<>();
 
+        /**
+         * 各 provider 的聊天补全路径。缺省回退到 /v1/chat/completions；
+         * Claude 等非 OpenAI 协议的上游需要显式配置（如 /v1/messages）。
+         */
+        private Map<String, String> providerChatPath = new HashMap<>();
+
+        /**
+         * 平台级上游凭证，key 为 provider。租户级 BYOK 未命中时回退到此处。
+         */
+        private Map<String, ProviderCredential> providerCredentials = new HashMap<>();
+
         private Map<String, String> modelAlias = new HashMap<>();
+    }
+
+    /**
+     * 渠道 Key 池里的一把 Key。
+     */
+    @Data
+    public static class ProviderApiKey {
+
+        /**
+         * 可选标识，缺省按序号生成；只用于日志与熔断状态追踪，不会发给上游。
+         */
+        private String keyId;
+
+        private String apiKey;
+
+        /**
+         * 权重，越大被选中的概率越高。
+         */
+        private Integer weight = 1;
+
+        private boolean enabled = true;
+    }
+
+    /**
+     * 上游凭证与鉴权方式。网关据此替换请求头，客户端传入的 Authorization 不再透传给上游。
+     */
+    @Data
+    public static class ProviderCredential {
+
+        /**
+         * 上游 API Key。
+         */
+        private String apiKey;
+
+        /**
+         * 承载凭证的请求头，例如 Authorization / x-api-key。
+         */
+        private String authHeader = "Authorization";
+
+        /**
+         * 认证 scheme，例如 Bearer；留空表示直接放置原始 Key。
+         */
+        private String authScheme = "Bearer";
+
+        /**
+         * 上游要求的附加请求头，例如 anthropic-version。
+         */
+        private Map<String, String> extraHeaders = new HashMap<>();
+
+        private boolean enabled = true;
+
+        /**
+         * Key 池：同一渠道可以配多把 Key 轮换使用。
+         * <p>
+         * 留空时继续用上面的 {@code apiKey}（保持单 Key 配置兼容）；
+         * 一旦配置了池，就以池为准——两处都写只会让人分不清哪把真正生效。
+         */
+        private List<ProviderApiKey> apiKeys = new ArrayList<>();
+
+        /**
+         * 渠道级每分钟请求上限（RPM），null 或 &le;0 表示不限。
+         * <p>
+         * 超限按"该通道暂时不可用"处理：回退链会换一条通道继续，
+         * 所有通道都被限住才把 429 返回给客户端。
+         */
+        private Integer rpmLimit;
     }
 
     @Data
@@ -112,6 +218,11 @@ public class AiGatewayProperties {
 
         private Long minTokenReserve = 128L;
 
+        /**
+         * 配额超限时返回给客户端的 Retry-After 秒数。
+         */
+        private Long quotaRetryAfterSeconds = 60L;
+
         private List<String> keyDimensions = new ArrayList<>(List.of("userId", "ip", "consumer"));
     }
 
@@ -130,9 +241,14 @@ public class AiGatewayProperties {
         private Double semanticSimilarityThreshold = 0.85D;
 
         /**
-         * 每次缓存命中的节省成本估算（USD）
+         * 语义缓存索引最大条目数，超出后按写入时间裁剪最旧条目，避免 ZSet 无界增长。
          */
-        private Double estimatedCostPerHitUsd = 0.002D;
+        private Integer semanticIndexMaxEntries = 1000;
+
+        /**
+         * 参与语义索引的单条文本最大字符数，超长截断。
+         */
+        private Integer semanticIndexMaxContentLength = 2048;
     }
 
     @Data
@@ -200,208 +316,19 @@ public class AiGatewayProperties {
          */
         private Double tracingSamplingRate = 1.0D;
 
+        /**
+         * 是否开启实时请求链路事件（SSE 看板）。
+         * <p>
+         * 关闭后埋点直接短路，连事件对象都不构造。
+         */
+        private boolean traceStreamEnabled = true;
+
+        /**
+         * 实时链路保留的最近事件条数，供页面首屏加载。
+         */
+        private int traceRecentLimit = 200;
+
         private Map<String, ModelPrice> modelPrice = new HashMap<>();
-    }
-
-    @Data
-    public static class Routing {
-
-        /**
-         * 是否启用失败回退（主路由失败时尝试候选 provider）
-         */
-        private boolean fallbackEnabled = false;
-
-        /**
-         * provider 优先级顺序，首个可用 provider 作为主路由
-         */
-        private List<String> providerPriority = new ArrayList<>(List.of("openai", "claude"));
-
-        /**
-         * 是否启用 A/B 灰度路由
-         */
-        private boolean abEnabled = false;
-
-        /**
-         * 灰度 provider（B 组）
-         */
-        private String abProvider = "claude";
-
-        /**
-         * B 组流量百分比（0-100）
-         */
-        private Integer abPercentage = 0;
-
-        /**
-         * 是否启用动态路由。
-         */
-        private boolean dynamicRoutingEnabled = false;
-
-        /**
-         * 路由策略：static / dynamic / cost-optimized / latency-optimized
-         */
-        private RoutingStrategy routingStrategy = RoutingStrategy.STATIC;
-    }
-
-    public enum RoutingStrategy {
-        STATIC,
-        DYNAMIC,
-        COST_OPTIMIZED,
-        LATENCY_OPTIMIZED
-    }
-
-    @Data
-    public static class Security {
-
-        /**
-         * 是否启用 API 鉴权
-         */
-        private boolean enabled = false;
-
-        /**
-         * 登录会话有效期（分钟）
-         */
-        private Long sessionTtlMinutes = 120L;
-
-        /**
-         * JWT 签名密钥（HS256，建议32字节以上）
-         */
-        private String jwtSecret = "replace-with-at-least-32-char-secret-key";
-
-        /**
-         * JWT issuer
-         */
-        private String jwtIssuer = "ai-gateway-console";
-
-        /**
-         * 用户列表（用户名 -> 凭证）
-         */
-        private Map<String, UserCredential> users = new HashMap<>(Map.of(
-                "admin", new UserCredential("admin123456", "admin"),
-                "viewer", new UserCredential("viewer123456", "viewer")
-        ));
-
-        /**
-         * 写操作允许的角色
-         */
-        private List<String> writeRoles = new ArrayList<>(List.of("admin"));
-    }
-
-    @Data
-    public static class Tenant {
-
-        @Valid
-        private Persistence persistence = new Persistence();
-
-        /**
-         * 是否启用平台 API Key 鉴权。
-         */
-        private boolean enabled = false;
-
-        /**
-         * 未启用多租户时使用的默认上下文标识。
-         */
-        private String defaultTenantId = "global";
-
-        private String defaultAppId = "default-app";
-
-        private String defaultKeyId = "default-key";
-
-        /**
-         * 配置化 API Key 凭证，key 为内部凭证 ID。
-         */
-        private Map<String, TenantApiKeyCredential> apiKeys = new HashMap<>();
-
-        /**
-         * 租户模型策略，key 为 tenantId。
-         */
-        private Map<String, TenantModelPolicy> modelPolicies = new HashMap<>();
-
-        /**
-         * 租户配额策略，key 为 tenantId。
-         */
-        private Map<String, TenantQuotaPolicy> quotaPolicies = new HashMap<>();
-    }
-
-    @Data
-    public static class Persistence {
-
-        /**
-         * 是否启用多租户配置的数据库读取。
-         */
-        private boolean enabled = false;
-    }
-
-    @Data
-    public static class TenantApiKeyCredential {
-
-        @NotBlank
-        private String apiKey;
-
-        @NotBlank
-        private String tenantId;
-
-        @NotBlank
-        private String appId;
-
-        private String keyId;
-
-        private boolean enabled = true;
-
-        private Instant expiresAt;
-    }
-
-    @Data
-    public static class TenantModelPolicy {
-
-        private boolean enabled = true;
-
-        /**
-         * 允许访问的模型集合。
-         */
-        private Set<String> allowedModels = new HashSet<>();
-
-        /**
-         * 请求模型到实际模型的映射。
-         */
-        private Map<String, String> modelMappings = new HashMap<>();
-
-        /**
-         * 默认模型别名，用于租户级模型覆写。
-         */
-        private String defaultModelAlias = "default";
-
-        /**
-         * 租户默认模型。
-         */
-        private String defaultModel;
-    }
-
-    @Data
-    public static class TenantQuotaPolicy {
-
-        private boolean enabled = true;
-
-        private Long tokenQuotaPerMinute;
-
-        private Long tokenQuotaPerDay;
-
-        private Long tokenQuotaPerMonth;
-    }
-
-    @Data
-    public static class UserCredential {
-
-        private String password;
-
-        private String role;
-
-        public UserCredential() {
-        }
-
-        public UserCredential(String password, String role) {
-            this.password = password;
-            this.role = role;
-        }
     }
 
     @Data

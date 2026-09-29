@@ -3,6 +3,7 @@ package com.nageoffer.shortlink.aigateway.config;
 import com.nageoffer.shortlink.aigateway.audit.AuditLogService;
 import com.nageoffer.shortlink.aigateway.exception.AiGatewayClientException;
 import com.nageoffer.shortlink.aigateway.security.ConsoleAuthService;
+import com.nageoffer.shortlink.aigateway.security.ConsoleRequestPaths;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -23,7 +24,7 @@ public class ConsoleSecurityAuditWebFilter {
     public WebFilter consoleSecurityWebFilter() {
         return (exchange, chain) -> {
             String path = exchange.getRequest().getPath().value();
-            if (!path.startsWith("/v1/") || "/v1/chat/completions".equals(path) || "/v1/security/login".equals(path)) {
+            if (!path.startsWith("/v1/") || ConsoleRequestPaths.isDataPlane(path) || ConsoleRequestPaths.isLogin(path)) {
                 return chain.filter(exchange);
             }
             if (!properties.getSecurity().isEnabled()) {

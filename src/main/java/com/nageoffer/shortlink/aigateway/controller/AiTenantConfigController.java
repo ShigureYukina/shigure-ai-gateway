@@ -1,6 +1,8 @@
 package com.nageoffer.shortlink.aigateway.controller;
 
 import com.nageoffer.shortlink.aigateway.audit.AuditLogService;
+import com.nageoffer.shortlink.aigateway.exception.AiGatewayClientException;
+import com.nageoffer.shortlink.aigateway.exception.AiGatewayErrorCode;
 import com.nageoffer.shortlink.aigateway.persistence.service.TenantConfigManagementService;
 import com.nageoffer.shortlink.aigateway.persistence.service.TenantConfigQueryService;
 import com.nageoffer.shortlink.aigateway.security.ConsoleAuthService;
@@ -14,6 +16,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ServerWebExchange;
 import reactor.core.publisher.Mono;
@@ -41,11 +44,12 @@ public class AiTenantConfigController {
         this.tenantConfigManagementService = tenantConfigManagementService;
     }
 
-    @Operation(summary = "查询 API Key 配置")
-    @GetMapping("/api-keys/{apiKey}")
-    public Map<String, Object> apiKey(@PathVariable String apiKey, ServerWebExchange exchange) {
+    @Operation(summary = "查询 API Key 配置",
+            description = "Key 走请求体而非 URL path：path 会进访问日志、审计明细与浏览器历史，等于把密钥抄了好几份")
+    @PostMapping("/api-keys/lookup")
+    public Map<String, Object> apiKey(@RequestBody Map<String, Object> request, ServerWebExchange exchange) {
         ConsoleAuthService.AuthPrincipal principal = authenticateWrite(exchange.getRequest().getHeaders(), false);
-        return tenantConfigQueryService.findApiKeyCredential(apiKey)
+        return tenantConfigQueryService.findApiKeyCredential(requiredApiKey(request))
                 .map(each -> Map.<String, Object>of(
                         "tenantId", each.getTenantId(),
                         "appId", each.getAppId(),
@@ -133,12 +137,22 @@ public class AiTenantConfigController {
                 .doOnSuccess(result -> auditLogService.record(principal.username(), principal.role(), "TENANT_API_KEY_UPSERT", "/v1/tenant-config/api-keys", true, String.valueOf(result)));
     }
 
-    @Operation(summary = "删除 API Key 配置")
-    @DeleteMapping("/api-keys/{apiKey}")
-    public Mono<Map<String, Object>> deleteApiKey(@PathVariable String apiKey, ServerWebExchange exchange) {
+    @Operation(summary = "删除 API Key 配置", description = "Key 走请求体而非 URL path；响应不再回显被删的 Key")
+    @DeleteMapping("/api-keys")
+    public Mono<Map<String, Object>> deleteApiKey(@RequestBody Map<String, Object> request, ServerWebExchange exchange) {
         ConsoleAuthService.AuthPrincipal principal = authenticateWrite(exchange.getRequest().getHeaders(), true);
-        return tenantConfigManagementService.deleteApiKey(apiKey)
-                .doOnSuccess(result -> auditLogService.record(principal.username(), principal.role(), "TENANT_API_KEY_DELETE", "/v1/tenant-config/api-keys/" + apiKey, true, String.valueOf(result)));
+        return tenantConfigManagementService.deleteApiKey(requiredApiKey(request))
+                // 审计明细固定串：原来带的是被删的 Key 本身
+                .doOnSuccess(result -> auditLogService.record(principal.username(), principal.role(), "TENANT_API_KEY_DELETE", "/v1/tenant-config/api-keys", true, "删除 API Key"));
+    }
+
+    private String requiredApiKey(Map<String, Object> request) {
+        Object value = request == null ? null : request.get("apiKey");
+        String apiKey = value == null ? null : String.valueOf(value).trim();
+        if (apiKey == null || apiKey.isBlank()) {
+            throw new AiGatewayClientException(AiGatewayErrorCode.BAD_REQUEST, "缺少 apiKey");
+        }
+        return apiKey;
     }
 
     @Operation(summary = "查询租户模型策略")
@@ -240,6 +254,39 @@ public class AiTenantConfigController {
         ConsoleAuthService.AuthPrincipal principal = authenticateWrite(exchange.getRequest().getHeaders(), true);
         return tenantConfigManagementService.deleteModelPrice(model)
                 .doOnSuccess(result -> auditLogService.record(principal.username(), principal.role(), "MODEL_PRICE_DELETE", "/v1/tenant-config/model-prices/" + model, true, String.valueOf(result)));
+    }
+
+    @Operation(summary = "查询上游凭证", description = "tenantId 为空时查询平台级凭证；API Key 只回显掩码")
+    @GetMapping("/provider-credentials/{provider}")
+    public Mono<Map<String, Object>> providerCredential(@PathVariable String provider,
+                                                        @RequestParam(name = "tenantId", required = false) String tenantId,
+                                                        ServerWebExchange exchange) {
+        ConsoleAuthService.AuthPrincipal principal = authenticateWrite(exchange.getRequest().getHeaders(), false);
+        return tenantConfigManagementService.getProviderCredential(tenantId, provider)
+                .map(result -> appendCurrentUser(result, principal.username()));
+    }
+
+    @Operation(summary = "新增或更新上游凭证", description = "tenantId 为空时写入平台级凭证，指定时写入租户 BYOK")
+    @PostMapping("/provider-credentials/{provider}")
+    public Mono<Map<String, Object>> upsertProviderCredential(@PathVariable String provider,
+                                                              @RequestParam(name = "tenantId", required = false) String tenantId,
+                                                              @RequestBody Map<String, Object> request,
+                                                              ServerWebExchange exchange) {
+        ConsoleAuthService.AuthPrincipal principal = authenticateWrite(exchange.getRequest().getHeaders(), true);
+        return tenantConfigManagementService.upsertProviderCredential(tenantId, provider, request)
+                .doOnSuccess(result -> auditLogService.record(principal.username(), principal.role(), "PROVIDER_CREDENTIAL_UPSERT",
+                        "/v1/tenant-config/provider-credentials/" + provider, true, String.valueOf(result)));
+    }
+
+    @Operation(summary = "删除上游凭证")
+    @DeleteMapping("/provider-credentials/{provider}")
+    public Mono<Map<String, Object>> deleteProviderCredential(@PathVariable String provider,
+                                                              @RequestParam(name = "tenantId", required = false) String tenantId,
+                                                              ServerWebExchange exchange) {
+        ConsoleAuthService.AuthPrincipal principal = authenticateWrite(exchange.getRequest().getHeaders(), true);
+        return tenantConfigManagementService.deleteProviderCredential(tenantId, provider)
+                .doOnSuccess(result -> auditLogService.record(principal.username(), principal.role(), "PROVIDER_CREDENTIAL_DELETE",
+                        "/v1/tenant-config/provider-credentials/" + provider, true, String.valueOf(result)));
     }
 
     private ConsoleAuthService.AuthPrincipal authenticateWrite(HttpHeaders headers, boolean write) {

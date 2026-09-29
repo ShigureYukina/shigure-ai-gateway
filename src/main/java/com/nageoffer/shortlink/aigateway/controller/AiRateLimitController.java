@@ -2,8 +2,11 @@ package com.nageoffer.shortlink.aigateway.controller;
 
 import com.nageoffer.shortlink.aigateway.config.AiGatewayProperties;
 import com.nageoffer.shortlink.aigateway.governance.RedisTokenQuotaService;
+import com.nageoffer.shortlink.aigateway.runtime.RuntimeConfigDomain;
+import com.nageoffer.shortlink.aigateway.runtime.RuntimeConfigPublisher;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpHeaders;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -26,9 +29,19 @@ public class AiRateLimitController {
 
     private final RedisTokenQuotaService redisTokenQuotaService;
 
+    private final RuntimeConfigPublisher runtimeConfigPublisher;
+
     public AiRateLimitController(AiGatewayProperties properties, RedisTokenQuotaService redisTokenQuotaService) {
+        this(properties, redisTokenQuotaService, RuntimeConfigPublisher.noPersistence());
+    }
+
+    @Autowired
+    public AiRateLimitController(AiGatewayProperties properties,
+                                 RedisTokenQuotaService redisTokenQuotaService,
+                                 RuntimeConfigPublisher runtimeConfigPublisher) {
         this.properties = properties;
         this.redisTokenQuotaService = redisTokenQuotaService;
+        this.runtimeConfigPublisher = runtimeConfigPublisher;
     }
 
     @Operation(summary = "查询限流配置", description = "返回 enabled/quota/keyDimensions 等运行时配置")
@@ -43,9 +56,10 @@ public class AiRateLimitController {
         );
     }
 
-    @Operation(summary = "更新限流配置", description = "运行时更新 enabled/default quotas/min reserve/keyDimensions")
+    @Operation(summary = "更新限流配置",
+            description = "运行时更新 enabled/default quotas/min reserve/keyDimensions；响应里的 persisted=false 表示仅本实例生效")
     @PostMapping("/config")
-    public Map<String, Object> update(@RequestBody Map<String, Object> requestParam) {
+    public Mono<Map<String, Object>> update(@RequestBody Map<String, Object> requestParam) {
         Object enabled = requestParam.get("enabled");
         if (enabled instanceof Boolean enabledValue) {
             properties.getRateLimit().setEnabled(enabledValue);
@@ -82,7 +96,7 @@ public class AiRateLimitController {
             }
         }
 
-        return config();
+        return runtimeConfigPublisher.save(RuntimeConfigDomain.RATE_LIMIT, config());
     }
 
     @Operation(summary = "查询当前配额用量", description = "按当前请求头维度计算 quotaKey 并返回 minute/day 用量")

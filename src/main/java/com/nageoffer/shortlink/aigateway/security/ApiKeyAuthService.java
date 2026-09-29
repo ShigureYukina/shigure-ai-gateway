@@ -1,6 +1,7 @@
 package com.nageoffer.shortlink.aigateway.security;
 
 import com.nageoffer.shortlink.aigateway.config.AiGatewayProperties;
+import com.nageoffer.shortlink.aigateway.config.AiGatewayTenantProperties;
 import com.nageoffer.shortlink.aigateway.exception.AiGatewayClientException;
 import com.nageoffer.shortlink.aigateway.exception.AiGatewayErrorCode;
 import com.nageoffer.shortlink.aigateway.persistence.service.TenantConfigQueryService;
@@ -44,7 +45,7 @@ public class ApiKeyAuthService {
         if (!StringUtils.hasText(apiKey)) {
             throw new AiGatewayClientException(AiGatewayErrorCode.UNAUTHORIZED, "缺少平台 API Key");
         }
-        AiGatewayProperties.TenantApiKeyCredential credential = findCredential(apiKey)
+        AiGatewayTenantProperties.TenantApiKeyCredential credential = findCredential(apiKey)
                 .orElseThrow(() -> new AiGatewayClientException(AiGatewayErrorCode.UNAUTHORIZED, "API Key 无效或未绑定租户"));
         if (!credential.isEnabled()) {
             throw new AiGatewayClientException(AiGatewayErrorCode.UNAUTHORIZED, "API Key 已禁用");
@@ -68,12 +69,12 @@ public class ApiKeyAuthService {
         return StringUtils.hasText(apiKey) ? apiKey.trim() : null;
     }
 
-    private Optional<AiGatewayProperties.TenantApiKeyCredential> findCredential(String apiKey) {
+    private Optional<AiGatewayTenantProperties.TenantApiKeyCredential> findCredential(String apiKey) {
         return tenantConfigQueryService.findApiKeyCredential(apiKey);
     }
 
     private String resolveCredentialKeyId(String apiKey) {
-        for (Map.Entry<String, AiGatewayProperties.TenantApiKeyCredential> entry : properties.getTenant().getApiKeys().entrySet()) {
+        for (Map.Entry<String, AiGatewayTenantProperties.TenantApiKeyCredential> entry : properties.getTenant().getApiKeys().entrySet()) {
             if (apiKey.equals(entry.getValue().getApiKey())) {
                 return entry.getKey();
             }

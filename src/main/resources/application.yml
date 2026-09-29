@@ -85,10 +85,32 @@ short-link:
       default-provider: openai
       provider-base-url:
         openai: https://api.openai.com
-        # claude: https://api.anthropic.com
+        claude: https://api.anthropic.com
+      # 非 OpenAI 协议的上游需要显式声明补全路径，缺省为 /v1/chat/completions
+      provider-chat-path:
+        claude: /v1/messages
+      # 平台级上游凭证；客户端传入的 Authorization 只用于平台鉴权，不会再透传给上游
+      provider-credentials:
+        openai:
+          api-key: ${OPENAI_API_KEY:sk-local-dev-placeholder}
+          auth-header: Authorization
+          auth-scheme: Bearer
+          # 渠道级 RPM 上限，留空/0 表示不限；超限按"通道暂时不可用"触发回退
+          rpm-limit: 0
+          # 多 Key 轮换池：配了就以池为准（api-key 被忽略），失败达阈值会把该 Key 冷却 60s
+          #  - key-id: openai-1
+          #    api-key: ${OPENAI_API_KEY_1:}
+          #    weight: 2
+          api-keys: []
+        claude:
+          api-key: ${ANTHROPIC_API_KEY:}
+          auth-header: x-api-key
+          auth-scheme: ""
+          extra-headers:
+            anthropic-version: "2023-06-01"
       model-alias:
         gpt-4o-mini-compatible: openai:gpt-4o-mini
-        # claude-3-5-sonnet-compatible: claude:claude-3-5-sonnet-latest
+        claude-3-5-sonnet-compatible: claude:claude-3-5-sonnet-latest
     timeout-retry:
       connect-timeout: 5s
       read-timeout: 60s
@@ -111,12 +133,14 @@ short-link:
       default-token-quota-per-minute: 60000
       default-token-quota-per-day: 1000000
       min-token-reserve: 128
+      quota-retry-after-seconds: 60
       key-dimensions: [userId, ip, consumer]
     cache:
       enabled: false
       ttl: 2m
       semantic-cache-enabled: false
-      estimated-cost-per-hit-usd: 0.002
+      semantic-index-max-entries: 1000
+      semantic-index-max-content-length: 2048
     safety:
       enabled: false
       input-strategy: intercept
@@ -148,8 +172,64 @@ short-link:
       ab-enabled: false
       ab-provider: claude
       ab-percentage: 0
+      # 通道组种子：DB 里 provider_group 有数据时以 DB 为准，这里只做兜底
+      # 策略可选 priority / round_robin / random / weighted / dynamic
+      provider-groups:
+        default:
+          strategy: priority
+          description: 默认通道组：openai 优先，claude 降级
+          members:
+            - provider: openai
+              weight: 3
+              priority: 2
+            - provider: claude
+              model: claude-3-5-sonnet-latest
+              weight: 1
+              priority: 1
+      # 模型 -> 组；绑定后该模型的通道选择与回退链均由组决定（含回退，不受 fallback-enabled 约束）
+      model-groups:
+        gpt-4o-mini: default
+    # 上游元数据自动同步，默认开启；失败只记状态不阻断服务（管理面 /v1/sync/status 可见）
+    # initial-delay / interval 由 @Scheduled 直接读取，必须写 ISO-8601（PT60S / PT12H），
+    # 写成 60s / 12h 会让应用在启动时直接报解析失败
+    sync:
+      timeout: 10s
+      price:
+        enabled: true
+        url: https://models.dev/api.json
+        initial-delay: PT60S
+        interval: PT12H
+      model:
+        enabled: true
+        path: /v1/models
+        initial-delay: PT90S
+        interval: PT6H
+    runtime-config:
+      # 跨实例同步：写入落库 + 递增版本号，各实例轮询版本号，变了才重载。
+      # 关闭后写入只作用于本实例内存（等价于改造前的行为）。
+      enabled: ${AI_GATEWAY_RUNTIME_CONFIG_ENABLED:true}
+      poll-interval: PT5S
+      poll-initial-delay: PT10S
+    probe:
+      # 主动探测：定时探活各渠道，连续失败自动禁用、恢复后自动放回候选集。
+      # 关掉之后渠道禁用状态只能靠管理接口手工维护（/v1/routing/channels/health）。
+      enabled: ${AI_GATEWAY_PROBE_ENABLED:true}
+      # interval / initial-delay 由 @Scheduled 直接读，必须是 ISO-8601（PT5M）。
+      # 写成 5m 会让启动直接失败 —— 本项目已在 GatewaySyncScheduler 上踩过一次。
+      interval: PT5M
+      initial-delay: PT60S
+      timeout: 10s
+      # 连续失败 3 次才禁用：探测误判会把一个健康渠道踢出候选集，比晚发现几分钟贵得多。
+      failure-threshold: 3
+      down-cooldown: PT5M
+      # 恢复门槛刻意低于失败门槛：多恢复一次的成本远低于把渠道永久关在门外。
+      recovery-threshold: 2
+      # yml 侧静态禁用（跟着发布走）：probe.channel-enabled.claude=false
+      channel-enabled: {}
     security:
-      enabled: false
+      # 默认开启：关闭后 62 个管理端点（含写上游 Key、删租户）全部匿名可达。
+      # 本地调试若不想登录，用 AI_GATEWAY_SECURITY_ENABLED=false 关掉，别改这里的默认值。
+      enabled: ${AI_GATEWAY_SECURITY_ENABLED:true}
       session-ttl-minutes: 120
       jwt-secret: ${AI_GATEWAY_JWT_SECRET:replace-with-at-least-32-char-secret-key}
       jwt-issuer: ${AI_GATEWAY_JWT_ISSUER:ai-gateway-console}
@@ -161,6 +241,15 @@ short-link:
           password: ${AI_GATEWAY_VIEWER_PASSWORD:viewer123456}
           role: viewer
       write-roles: [admin]
+      secret:
+        # 主密钥：Base64 的 32 字节。留空 = 不加密（dev 默认，encrypt/decrypt 原样透传、
+        # tenant_api_key.api_key_hash 保持 NULL 并回退明文查找）。配了但不合法会直接启动失败。
+        # 生成：openssl rand -base64 32
+        master-key: ${AI_GATEWAY_MASTER_KEY:}
+      ssrf:
+        # dev 默认放行私网/回环：本地把上游指向 http://localhost:11434 是正常用法。
+        # 云元数据主机名、userinfo、非 http(s) 不受这个开关影响，一律拒。
+        allow-private-addresses: ${AI_GATEWAY_SSRF_ALLOW_PRIVATE:true}
     tenant:
       enabled: false
       persistence:

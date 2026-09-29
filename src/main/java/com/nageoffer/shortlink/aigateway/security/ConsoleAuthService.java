@@ -1,9 +1,10 @@
 package com.nageoffer.shortlink.aigateway.security;
 
 import com.nageoffer.shortlink.aigateway.config.AiGatewayProperties;
+import com.nageoffer.shortlink.aigateway.config.AiGatewaySecurityProperties;
 import com.nageoffer.shortlink.aigateway.exception.AiGatewayClientException;
 import com.nageoffer.shortlink.aigateway.exception.AiGatewayErrorCode;
-import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpHeaders;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
@@ -11,12 +12,29 @@ import org.springframework.util.StringUtils;
 import java.time.Instant;
 
 @Service
-@RequiredArgsConstructor
 public class ConsoleAuthService {
 
     private final AiGatewayProperties properties;
 
     private final JwtTokenService jwtTokenService;
+
+    private final PasswordEncoderSupport passwordEncoderSupport;
+
+    @Autowired
+    public ConsoleAuthService(AiGatewayProperties properties,
+                              JwtTokenService jwtTokenService,
+                              PasswordEncoderSupport passwordEncoderSupport) {
+        this.properties = properties;
+        this.jwtTokenService = jwtTokenService;
+        this.passwordEncoderSupport = passwordEncoderSupport;
+    }
+
+    /**
+     * 校验口令时不需要哈希能力，保留这个构造器让既有测试不用改。
+     */
+    public ConsoleAuthService(AiGatewayProperties properties, JwtTokenService jwtTokenService) {
+        this(properties, jwtTokenService, new PasswordEncoderSupport());
+    }
 
     public AuthPrincipal authenticate(HttpHeaders headers) {
         if (!properties.getSecurity().isEnabled()) {
@@ -40,11 +58,11 @@ public class ConsoleAuthService {
     }
 
     public LoginResult login(String username, String password) {
-        AiGatewayProperties.UserCredential credential = properties.getSecurity().getUsers().get(username);
+        AiGatewaySecurityProperties.UserCredential credential = properties.getSecurity().getUsers().get(username);
         if (credential == null || !StringUtils.hasText(credential.getPassword())) {
             throw new AiGatewayClientException(AiGatewayErrorCode.UNAUTHORIZED, "用户名或密码错误");
         }
-        if (!credential.getPassword().equals(password)) {
+        if (!passwordEncoderSupport.matches(credential.getPassword(), password)) {
             throw new AiGatewayClientException(AiGatewayErrorCode.UNAUTHORIZED, "用户名或密码错误");
         }
         Instant expiresAt = Instant.now().plusSeconds(properties.getSecurity().getSessionTtlMinutes() * 60);

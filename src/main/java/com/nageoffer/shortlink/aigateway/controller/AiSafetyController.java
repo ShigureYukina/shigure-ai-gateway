@@ -1,29 +1,47 @@
 package com.nageoffer.shortlink.aigateway.controller;
 
 import com.nageoffer.shortlink.aigateway.config.AiGatewayProperties;
+import com.nageoffer.shortlink.aigateway.runtime.RuntimeConfigDomain;
+import com.nageoffer.shortlink.aigateway.runtime.RuntimeConfigPublisher;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
-import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import reactor.core.publisher.Mono;
 
 import java.util.Map;
 import java.util.Set;
 
 @RestController
-@RequiredArgsConstructor
 @RequestMapping("/v1/safety")
 @Tag(name = "安全策略", description = "输入/输出安全过滤配置")
 public class AiSafetyController {
 
     private final AiGatewayProperties properties;
 
-    @Operation(summary = "更新安全配置", description = "运行时更新 enabled/outputStrategy/blockedWords")
+    private final RuntimeConfigPublisher runtimeConfigPublisher;
+
+    @Autowired
+    public AiSafetyController(AiGatewayProperties properties, RuntimeConfigPublisher runtimeConfigPublisher) {
+        this.properties = properties;
+        this.runtimeConfigPublisher = runtimeConfigPublisher;
+    }
+
+    /**
+     * 保留给不接配置中心的调用方（含既有测试）：写入只改本实例内存。
+     */
+    public AiSafetyController(AiGatewayProperties properties) {
+        this(properties, RuntimeConfigPublisher.noPersistence());
+    }
+
+    @Operation(summary = "更新安全配置",
+            description = "运行时更新 enabled/outputStrategy/blockedWords 等；响应里的 persisted=false 表示仅本实例生效")
     @PostMapping("/config")
-    public Map<String, Object> update(@RequestBody Map<String, Object> requestParam) {
+    public Mono<Map<String, Object>> update(@RequestBody Map<String, Object> requestParam) {
         Object enabled = requestParam.get("enabled");
         if (enabled instanceof Boolean enabledValue) {
             properties.getSafety().setEnabled(enabledValue);
@@ -65,7 +83,7 @@ public class AiSafetyController {
         if (redactMask instanceof String redactMaskValue && !redactMaskValue.isBlank()) {
             properties.getSafety().setRedactMask(redactMaskValue);
         }
-        return current();
+        return runtimeConfigPublisher.save(RuntimeConfigDomain.SAFETY, current());
     }
 
     @Operation(summary = "查询安全配置", description = "获取当前安全策略配置")
