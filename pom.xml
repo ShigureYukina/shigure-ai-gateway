@@ -50,6 +50,13 @@
     </dependencyManagement>
 
     <dependencies>
+        <!-- WebFlux/Netty 运行时底座：控制器与 WebClient 都是响应式的，
+             此前 reactor-netty 由已移除的 spring-cloud-starter-gateway 传递提供，现显式声明 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-webflux</artifactId>
+        </dependency>
+
         <dependency>
             <groupId>org.springframework.cloud</groupId>
             <artifactId>spring-cloud-loadbalancer</artifactId>
