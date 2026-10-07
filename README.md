@@ -64,7 +64,7 @@
 ## 技术栈
 
 - **Language**: Java 17
-- **Framework**: Spring Boot 3.3.2, Spring Cloud Gateway, WebFlux
+- **Framework**: Spring Boot 3.3.2, Spring WebFlux + WebClient（网关为自研转发层，未使用 Spring Cloud Gateway 路由）
 - **Data & Cache**: Redis, R2DBC(MySQL，可选)
 - **Observability**: Micrometer, Prometheus, OpenTelemetry Tracing
 - **Test**: JUnit 5, Reactor Test, Testcontainers（Redis 集成测试）
@@ -387,4 +387,4 @@ powershell -ExecutionPolicy Bypass -File "scripts/simulate_e2e.ps1"
 - [x] 原生协议入口（Anthropic Messages / OpenAI Responses）
 - [x] 渠道多 Key 池 + 渠道级 RPM
 - [ ] 竞品对比文档（vs New API / Octopus / LiteLLM）
-- [ ] 通道主动探测（定时健康测试 + 自动禁用/恢复）
+- [x] 通道主动探测（定时健康测试 + 自动禁用/恢复）

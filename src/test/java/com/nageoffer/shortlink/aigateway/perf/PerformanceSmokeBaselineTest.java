@@ -9,6 +9,9 @@ import com.nageoffer.shortlink.aigateway.governance.TokenEstimator;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.server.reactive.ServerHttpRequest;
+import org.springframework.mock.http.server.reactive.MockServerHttpRequest;
+import java.net.InetSocketAddress;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -31,15 +34,14 @@ class PerformanceSmokeBaselineTest {
         message.setContent("performance smoke test payload for ai gateway");
         request.setMessages(List.of(message));
 
-        HttpHeaders headers = new HttpHeaders();
-        headers.set("userId", "u-100");
-        headers.set("X-Forwarded-For", "127.0.0.1");
-        headers.set("X-Consumer", "perf");
+        ServerHttpRequest httpRequest = MockServerHttpRequest.post("/v1/chat/completions")
+                .remoteAddress(new InetSocketAddress("127.0.0.1", 50000))
+                .build();
 
         Instant start = Instant.now();
         for (int i = 0; i < 20_000; i++) {
             tokenEstimator.estimate(request);
-            quotaKeyGenerator.build(headers, "openai", "gpt-4o-mini");
+            quotaKeyGenerator.build(null, httpRequest, "openai", "gpt-4o-mini");
             cacheKeyService.build("openai", "gpt-4o-mini", request);
         }
         long elapsedMillis = Duration.between(start, Instant.now()).toMillis();

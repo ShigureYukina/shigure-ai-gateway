@@ -14,7 +14,9 @@ import org.mockito.Mockito;
 import org.springframework.data.redis.core.ReactiveStringRedisTemplate;
 import org.springframework.data.redis.core.ReactiveValueOperations;
 import org.springframework.data.redis.core.script.RedisScript;
-import org.springframework.http.HttpHeaders;
+import org.springframework.mock.http.server.reactive.MockServerHttpRequest;
+import org.springframework.http.server.reactive.ServerHttpRequest;
+import java.net.InetSocketAddress;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
@@ -121,12 +123,11 @@ class RedisTokenQuotaServiceTest {
 
         RedisTokenQuotaService service = buildService(redisTemplate, properties);
 
-        HttpHeaders headers = new HttpHeaders();
-        headers.set("userId", "u-1");
-        headers.set("X-Forwarded-For", "127.0.0.1");
-        headers.set("X-Consumer", "demo");
+        ServerHttpRequest httpRequest = MockServerHttpRequest.get("/v1/rate-limit/usage")
+                .remoteAddress(new InetSocketAddress("127.0.0.1", 50000))
+                .build();
 
-        Map<String, Object> usage = service.currentUsage(headers, "openai", "gpt-4o-mini").block();
+        Map<String, Object> usage = service.currentUsage(httpRequest, "openai", "gpt-4o-mini").block();
 
         Assertions.assertNotNull(usage);
         Assertions.assertEquals(Boolean.TRUE, usage.get("enabled"));
@@ -158,7 +159,7 @@ class RedisTokenQuotaServiceTest {
         message.setContent("hello");
         request.setMessages(List.of(message));
 
-        QuotaPreCheckContext context = service.preCheck(new TenantContext("tenant-a", "app-a", "key-a"), new HttpHeaders(), "openai", "gpt-4o-mini", request).block();
+        QuotaPreCheckContext context = service.preCheck(new TenantContext("tenant-a", "app-a", "key-a"), usageRequest(), "openai", "gpt-4o-mini", request).block();
 
         Assertions.assertNotNull(context);
         Assertions.assertEquals(0L, context.getReservedTokens());
@@ -176,12 +177,12 @@ class RedisTokenQuotaServiceTest {
         properties.getTenant().getQuotaPolicies().put("tenant-a", quotaPolicy);
 
         ReactiveStringRedisTemplate redisTemplate = Mockito.mock(ReactiveStringRedisTemplate.class);
-        Mockito.when(redisTemplate.execute(ArgumentMatchers.<RedisScript<Long>>any(), anyList(), anyList()))
-                .thenReturn(Flux.just(1L));
+        Mockito.when(redisTemplate.execute(ArgumentMatchers.<RedisScript<List>>any(), anyList(), anyList()))
+                .thenReturn(Flux.just(List.of(1L, 30L, 300L)));
 
         RedisTokenQuotaService service = buildService(redisTemplate, properties);
 
-        QuotaPreCheckContext context = service.preCheck(new TenantContext("tenant-a", "app-a", "key-a"), new HttpHeaders(), "openai", "gpt-4o-mini", request()).block();
+        QuotaPreCheckContext context = service.preCheck(new TenantContext("tenant-a", "app-a", "key-a"), usageRequest(), "openai", "gpt-4o-mini", request()).block();
 
         Assertions.assertNotNull(context);
         Assertions.assertEquals(200L, context.getMinuteQuota());
@@ -192,7 +193,7 @@ class RedisTokenQuotaServiceTest {
         Assertions.assertTrue(context.getQuotaKey().contains("keyId=key-a"));
 
         ArgumentCaptor<List<String>> argsCaptor = ArgumentCaptor.forClass(List.class);
-        Mockito.verify(redisTemplate).execute(ArgumentMatchers.<RedisScript<Long>>any(), anyList(), argsCaptor.capture());
+        Mockito.verify(redisTemplate).execute(ArgumentMatchers.<RedisScript<List>>any(), anyList(), argsCaptor.capture());
         List<String> args = argsCaptor.getValue();
         Assertions.assertEquals("200", args.get(1));
         Assertions.assertEquals("1000", args.get(2));
@@ -212,12 +213,12 @@ class RedisTokenQuotaServiceTest {
         properties.getTenant().getQuotaPolicies().put("tenant-a", quotaPolicy);
 
         ReactiveStringRedisTemplate redisTemplate = Mockito.mock(ReactiveStringRedisTemplate.class);
-        Mockito.when(redisTemplate.execute(ArgumentMatchers.<RedisScript<Long>>any(), anyList(), anyList()))
-                .thenReturn(Flux.just(0L));
+        Mockito.when(redisTemplate.execute(ArgumentMatchers.<RedisScript<List>>any(), anyList(), anyList()))
+                .thenReturn(Flux.just(List.of(0L, 0L, 0L)));
 
         RedisTokenQuotaService service = buildService(redisTemplate, properties);
 
-        StepVerifier.create(service.preCheck(new TenantContext("tenant-a", "app-a", "key-a"), new HttpHeaders(), "openai", "gpt-4o-mini", request()))
+        StepVerifier.create(service.preCheck(new TenantContext("tenant-a", "app-a", "key-a"), usageRequest(), "openai", "gpt-4o-mini", request()))
                 .expectError(com.nageoffer.shortlink.aigateway.exception.AiGatewayClientException.class)
                 .verify();
 
@@ -257,5 +258,11 @@ class RedisTokenQuotaServiceTest {
         properties.getRateLimit().setDefaultTokenQuotaPerDay(10000L);
         properties.getRateLimit().setMinTokenReserve(64L);
         return properties;
+    }
+
+    private ServerHttpRequest usageRequest() {
+        return MockServerHttpRequest.get("/v1/rate-limit/usage")
+                .remoteAddress(new InetSocketAddress("127.0.0.1", 50000))
+                .build();
     }
 }

@@ -39,6 +39,8 @@ import org.mockito.Mockito;
 import org.springframework.cloud.client.circuitbreaker.ReactiveCircuitBreaker;
 import org.springframework.cloud.client.circuitbreaker.ReactiveCircuitBreakerFactory;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.server.reactive.ServerHttpRequest;
+import org.springframework.mock.http.server.reactive.MockServerHttpRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.reactive.function.client.ClientResponse;
 import org.springframework.web.reactive.function.client.WebClient;
@@ -193,7 +195,7 @@ class AiGatewayServiceStreamSettlementTest {
                         "{\"choices\":[],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":5,\"total_tokens\":15}}",
                         "[DONE]"));
 
-        List<String> chunks = service.streamChatCompletion(request(), headers(), tenantContext()).collectList().block();
+        List<String> chunks = service.streamChatCompletion(request(), httpRequest(), tenantContext()).collectList().block();
 
         Assertions.assertNotNull(chunks);
         Assertions.assertEquals(3, chunks.size());
@@ -210,6 +212,8 @@ class AiGatewayServiceStreamSettlementTest {
         Assertions.assertTrue(stages.containsAll(List.of("routing", "quota", "upstream", "first-token", "completed")),
                 "缺少阶段: " + stages);
 
+        // 限流响应头反映的是预检（预扣后）时刻的用量快照——结算发生在响应提交之后，
+        // 头里永远带不上结算后的值，这是设计而不是缺陷
         Map<String, String> rateLimitHeaders = rateLimitHeaderService.consume(REQUEST_ID);
         Assertions.assertEquals("100", rateLimitHeaders.get("x-ratelimit-limit-tokens"));
         Assertions.assertEquals("85", rateLimitHeaders.get("x-ratelimit-remaining-tokens"));
@@ -221,7 +225,7 @@ class AiGatewayServiceStreamSettlementTest {
         Mockito.when(providerAdapter.fromUpstreamSse(Mockito.any(), Mockito.any()))
                 .thenReturn(Flux.just("{\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}"));
 
-        List<String> chunks = service.streamChatCompletion(request(), headers(), tenantContext()).collectList().block();
+        List<String> chunks = service.streamChatCompletion(request(), httpRequest(), tenantContext()).collectList().block();
 
         Assertions.assertNotNull(chunks);
         Assertions.assertEquals(2, chunks.size());
@@ -235,7 +239,7 @@ class AiGatewayServiceStreamSettlementTest {
         Mockito.when(providerAdapter.fromUpstreamSse(Mockito.any(), Mockito.any()))
                 .thenReturn(Flux.error(new IllegalStateException("upstream broken")));
 
-        List<String> chunks = service.streamChatCompletion(request(), headers(), tenantContext()).collectList().block();
+        List<String> chunks = service.streamChatCompletion(request(), httpRequest(), tenantContext()).collectList().block();
 
         // 失败不再硬断流，而是下发错误帧 + [DONE]
         Assertions.assertNotNull(chunks);
@@ -257,7 +261,7 @@ class AiGatewayServiceStreamSettlementTest {
                 .thenReturn(Flux.just("{\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}")
                         .concatWith(Flux.never()));
 
-        StepVerifier.create(service.streamChatCompletion(request(), headers(), tenantContext()))
+        StepVerifier.create(service.streamChatCompletion(request(), httpRequest(), tenantContext()))
                 .expectNextMatches(chunk -> chunk.contains("hi"))
                 .thenCancel()
                 .verify();
@@ -303,7 +307,7 @@ class AiGatewayServiceStreamSettlementTest {
 
         AiGatewayService fallbackService = buildService(routeAwareWebClient(), List.of(providerAdapter, claudeAdapter));
 
-        List<String> chunks = fallbackService.streamChatCompletion(request(), headers(), tenantContext()).collectList().block();
+        List<String> chunks = fallbackService.streamChatCompletion(request(), httpRequest(), tenantContext()).collectList().block();
 
         Assertions.assertNotNull(chunks);
         Assertions.assertEquals(3, chunks.size());
@@ -325,6 +329,8 @@ class AiGatewayServiceStreamSettlementTest {
                         .minuteQuota(minuteQuota)
                         .dayQuota(dayQuota)
                         .monthQuota(dayQuota * 30)
+                        .minuteUsedAfterReserve(15L)
+                        .dayUsedAfterReserve(15L)
                         .minuteKey("minute")
                         .dayKey("day")
                         .monthKey("month")
@@ -337,10 +343,10 @@ class AiGatewayServiceStreamSettlementTest {
         return credential;
     }
 
-    private HttpHeaders headers() {
-        HttpHeaders headers = new HttpHeaders();
-        headers.set("X-Request-Id", REQUEST_ID);
-        return headers;
+    private ServerHttpRequest httpRequest() {
+        return MockServerHttpRequest.post("/v1/chat/completions")
+                .header("X-Request-Id", REQUEST_ID)
+                .build();
     }
 
     private TenantContext tenantContext() {

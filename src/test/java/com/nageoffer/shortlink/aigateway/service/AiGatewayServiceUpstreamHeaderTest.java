@@ -38,6 +38,8 @@ import org.mockito.Mockito;
 import org.springframework.cloud.client.circuitbreaker.ReactiveCircuitBreaker;
 import org.springframework.cloud.client.circuitbreaker.ReactiveCircuitBreakerFactory;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.server.reactive.ServerHttpRequest;
+import org.springframework.mock.http.server.reactive.MockServerHttpRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.reactive.function.client.ClientResponse;
 import org.springframework.web.reactive.function.client.WebClient;
@@ -136,7 +138,7 @@ class AiGatewayServiceUpstreamHeaderTest {
     void shouldReplaceClientAuthorizationWithConfiguredUpstreamCredential() {
         platformCredential("openai", "sk-upstream-secret");
 
-        String body = service.chatCompletion(request(), clientHeaders(), tenantContext()).block();
+        String body = service.chatCompletion(request(), clientRequest(), tenantContext()).block();
 
         Assertions.assertNotNull(body);
         Assertions.assertEquals("Bearer sk-upstream-secret", capturedUpstreamHeaders.get().getFirst(HttpHeaders.AUTHORIZATION));
@@ -152,7 +154,7 @@ class AiGatewayServiceUpstreamHeaderTest {
                 .computeIfAbsent("tenant-a", key -> new java.util.HashMap<>())
                 .put("openai", byok);
 
-        service.chatCompletion(request(), clientHeaders(), tenantContext()).block();
+        service.chatCompletion(request(), clientRequest(), tenantContext()).block();
 
         Assertions.assertEquals("Bearer sk-tenant-byok", capturedUpstreamHeaders.get().getFirst(HttpHeaders.AUTHORIZATION));
     }
@@ -161,7 +163,7 @@ class AiGatewayServiceUpstreamHeaderTest {
     void shouldForwardWhitelistedClientHeadersAndRequestId() {
         platformCredential("openai", "sk-platform");
 
-        service.chatCompletion(request(), clientHeaders(), tenantContext()).block();
+        service.chatCompletion(request(), clientRequest(), tenantContext()).block();
 
         Assertions.assertEquals("req-fixed-1", capturedUpstreamHeaders.get().getFirst("X-Request-Id"));
         Assertions.assertEquals("assistants=v2", capturedUpstreamHeaders.get().getFirst("OpenAI-Beta"));
@@ -172,7 +174,7 @@ class AiGatewayServiceUpstreamHeaderTest {
     @Test
     void shouldFailFastWhenNoUpstreamCredentialConfigured() {
         RuntimeException exception = Assertions.assertThrows(RuntimeException.class,
-                () -> service.chatCompletion(request(), clientHeaders(), tenantContext()).block());
+                () -> service.chatCompletion(request(), clientRequest(), tenantContext()).block());
 
         Assertions.assertNotNull(exception);
         Assertions.assertTrue(String.valueOf(exception.getMessage()).contains("未配置上游凭证"),
@@ -184,7 +186,7 @@ class AiGatewayServiceUpstreamHeaderTest {
         AiGatewayProperties.ProviderCredential credential = platformCredential("openai", "sk-platform");
         credential.setExtraHeaders(java.util.Map.of("anthropic-version", "2023-06-01"));
 
-        service.chatCompletion(request(), clientHeaders(), tenantContext()).block();
+        service.chatCompletion(request(), clientRequest(), tenantContext()).block();
 
         Assertions.assertEquals("2023-06-01", capturedUpstreamHeaders.get().getFirst("anthropic-version"));
     }
@@ -197,13 +199,13 @@ class AiGatewayServiceUpstreamHeaderTest {
                 .build());
     }
 
-    private HttpHeaders clientHeaders() {
-        HttpHeaders headers = new HttpHeaders();
-        headers.set(HttpHeaders.AUTHORIZATION, CLIENT_PLATFORM_KEY);
-        headers.set("X-Request-Id", "req-fixed-1");
-        headers.set("OpenAI-Beta", "assistants=v2");
-        headers.set("X-Internal-Trace", "should-not-be-forwarded");
-        return headers;
+    private ServerHttpRequest clientRequest() {
+        return MockServerHttpRequest.post("/v1/chat/completions")
+                .header(HttpHeaders.AUTHORIZATION, CLIENT_PLATFORM_KEY)
+                .header("X-Request-Id", "req-fixed-1")
+                .header("OpenAI-Beta", "assistants=v2")
+                .header("X-Internal-Trace", "should-not-be-forwarded")
+                .build();
     }
 
     private TenantContext tenantContext() {

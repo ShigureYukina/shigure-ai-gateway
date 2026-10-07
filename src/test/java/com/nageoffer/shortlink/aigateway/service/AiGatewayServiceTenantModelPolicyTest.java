@@ -31,6 +31,7 @@ import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 import org.springframework.cloud.client.circuitbreaker.ReactiveCircuitBreakerFactory;
 import org.springframework.http.HttpHeaders;
+import org.springframework.mock.http.server.reactive.MockServerHttpRequest;
 import org.springframework.web.reactive.function.client.WebClient;
 
 import java.util.List;
@@ -78,7 +79,7 @@ class AiGatewayServiceTenantModelPolicyTest {
         AiGatewayClientException exception = Assertions.assertThrows(AiGatewayClientException.class,
                 () -> service.chatCompletion(
                         request("claude-3-5-sonnet-latest"),
-                        new HttpHeaders(),
+                        MockServerHttpRequest.post("/v1/chat/completions").build(),
                         new TenantContext("tenant-a", "app-a", "key-a")
                 ).block());
 

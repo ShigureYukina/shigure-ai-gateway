@@ -12,9 +12,11 @@ import org.mockito.ArgumentMatchers;
 import org.mockito.Mockito;
 import org.springframework.data.redis.core.ReactiveStringRedisTemplate;
 import org.springframework.data.redis.core.script.RedisScript;
-import org.springframework.http.HttpHeaders;
+import org.springframework.http.server.reactive.ServerHttpRequest;
+import org.springframework.mock.http.server.reactive.MockServerHttpRequest;
 import reactor.core.publisher.Flux;
 
+import java.net.InetSocketAddress;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
@@ -39,7 +41,9 @@ class RedisTokenQuotaConsistencyTest {
         AtomicLong minuteUsage = new AtomicLong(0L);
         AtomicLong dayUsage = new AtomicLong(0L);
 
-        Mockito.when(redisTemplate.execute(ArgumentMatchers.<RedisScript<Long>>any(), anyList(), anyList()))
+        // 预检脚本的新契约：回传 {allowed, minuteAfterReserve, dayAfterReserve}，
+        // 服务层靠第二个/第三个元素在预检时刻组装限流响应头
+        Mockito.when(redisTemplate.execute(ArgumentMatchers.<RedisScript<List>>any(), anyList(), anyList()))
                 .thenAnswer(invocation -> {
                     List<String> args = invocation.getArgument(2);
                     long reserve = Long.parseLong(args.get(0));
@@ -48,11 +52,11 @@ class RedisTokenQuotaConsistencyTest {
                     long monthLimit = Long.parseLong(args.get(3));
                     synchronized (this) {
                         if (minuteUsage.get() + reserve > minuteLimit || dayUsage.get() + reserve > dayLimit || dayUsage.get() + reserve > monthLimit) {
-                            return Flux.just(0L);
+                            return Flux.just(List.of(0L, minuteUsage.get(), dayUsage.get()));
                         }
                         minuteUsage.addAndGet(reserve);
                         dayUsage.addAndGet(reserve);
-                        return Flux.just(1L);
+                        return Flux.just(List.of(1L, minuteUsage.get(), dayUsage.get()));
                     }
                 });
 
@@ -60,10 +64,9 @@ class RedisTokenQuotaConsistencyTest {
         QuotaKeyGenerator quotaKeyGenerator = new QuotaKeyGenerator(properties);
         RedisTokenQuotaService service = new RedisTokenQuotaService(redisTemplate, tokenEstimator, quotaKeyGenerator, properties, Mockito.mock(AiGatewayMetricsRecorder.class));
 
-        HttpHeaders headers = new HttpHeaders();
-        headers.set("userId", "u-1");
-        headers.set("X-Forwarded-For", "127.0.0.1");
-        headers.set("X-Consumer", "demo");
+        ServerHttpRequest httpRequest = MockServerHttpRequest.post("/v1/chat/completions")
+                .remoteAddress(new InetSocketAddress("127.0.0.1", 50000))
+                .build();
 
         AiChatCompletionReqDTO request = new AiChatCompletionReqDTO();
         request.setModel("gpt-4o-mini");
@@ -82,7 +85,7 @@ class RedisTokenQuotaConsistencyTest {
         for (int i = 0; i < parallelRequests; i++) {
             executor.submit(() -> {
                 try {
-                    service.preCheck(new TenantContext("tenant-a", "app-a", "key-a"), headers, "openai", "gpt-4o-mini", request).block();
+                    service.preCheck(new TenantContext("tenant-a", "app-a", "key-a"), httpRequest, "openai", "gpt-4o-mini", request).block();
                     successCount.incrementAndGet();
                 } catch (AiGatewayClientException ex) {
                     rejectedCount.incrementAndGet();

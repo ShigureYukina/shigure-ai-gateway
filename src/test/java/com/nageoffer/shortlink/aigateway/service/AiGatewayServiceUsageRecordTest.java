@@ -43,6 +43,8 @@ import org.springframework.http.HttpStatus;
 import org.springframework.web.reactive.function.client.ClientResponse;
 import org.springframework.web.reactive.function.client.ExchangeFunction;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.server.reactive.ServerHttpRequest;
+import org.springframework.mock.http.server.reactive.MockServerHttpRequest;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
@@ -130,7 +132,7 @@ class AiGatewayServiceUsageRecordTest {
                 upstreamCallExecutor
         );
 
-        String body = service.chatCompletion(request(), new HttpHeaders(), new TenantContext("tenant-a", "app-a", "key-a")).block();
+        String body = service.chatCompletion(request(), httpRequest(), new TenantContext("tenant-a", "app-a", "key-a")).block();
 
         Assertions.assertEquals("normalized-body", body);
         Mockito.verify(aiCacheStatsService).recordMiss();
@@ -231,7 +233,7 @@ class AiGatewayServiceUsageRecordTest {
                 upstreamCallExecutor
         );
 
-        String body = service.chatCompletion(request(), new HttpHeaders(), new TenantContext("tenant-a", "app-a", "key-a")).block();
+        String body = service.chatCompletion(request(), httpRequest(), new TenantContext("tenant-a", "app-a", "key-a")).block();
 
         Assertions.assertEquals("claude-normalized", body);
         ArgumentCaptor<AiCallRecord> captor = ArgumentCaptor.forClass(AiCallRecord.class);
@@ -292,7 +294,7 @@ class AiGatewayServiceUsageRecordTest {
                 upstreamCallExecutor
         );
 
-        String body = service.chatCompletion(request(), new HttpHeaders(), new TenantContext("tenant-a", "app-a", "key-a")).block();
+        String body = service.chatCompletion(request(), httpRequest(), new TenantContext("tenant-a", "app-a", "key-a")).block();
 
         Assertions.assertEquals("cached-body", body);
         ArgumentCaptor<AiCallRecord> captor = ArgumentCaptor.forClass(AiCallRecord.class);
@@ -360,7 +362,7 @@ class AiGatewayServiceUsageRecordTest {
                 upstreamCallExecutor
         );
 
-        String body = service.chatCompletion(request(), new HttpHeaders(), new TenantContext("tenant-a", "app-a", "key-a")).block();
+        String body = service.chatCompletion(request(), httpRequest(), new TenantContext("tenant-a", "app-a", "key-a")).block();
 
         Assertions.assertEquals("semantic-body", body);
         Mockito.verify(aiCacheStatsService).recordSemanticHit();
@@ -435,7 +437,7 @@ class AiGatewayServiceUsageRecordTest {
 
         // 流式链路无法再改 HTTP 状态码：失败必须转成 OpenAI 兼容错误帧并补 [DONE]，
         // 否则客户端只会看到连接被截断，无法区分"上游挂了"与"网络抖动"。
-        java.util.List<String> chunks = service.streamChatCompletion(streamRequest(), new HttpHeaders(),
+        java.util.List<String> chunks = service.streamChatCompletion(streamRequest(), httpRequest(),
                         new TenantContext("tenant-a", "app-a", "key-a"))
                 .collectList()
                 .block();
@@ -500,7 +502,7 @@ class AiGatewayServiceUsageRecordTest {
                 upstreamCallExecutor
         );
 
-        StepVerifier.create(service.chatCompletion(request(), new HttpHeaders(), new TenantContext("tenant-a", "app-a", "key-a")))
+        StepVerifier.create(service.chatCompletion(request(), httpRequest(), new TenantContext("tenant-a", "app-a", "key-a")))
                 .expectErrorSatisfies(ex -> {
                     AiGatewayClientException apiException = (AiGatewayClientException) ex;
                     Assertions.assertEquals(AiGatewayErrorCode.QUOTA_EXCEEDED, apiException.getErrorCode());
@@ -583,7 +585,7 @@ class AiGatewayServiceUsageRecordTest {
         );
 
         RuntimeException exception = Assertions.assertThrows(RuntimeException.class,
-                () -> service.chatCompletion(request(), new HttpHeaders(), new TenantContext("tenant-a", "app-a", "key-a")).block());
+                () -> service.chatCompletion(request(), httpRequest(), new TenantContext("tenant-a", "app-a", "key-a")).block());
 
         Assertions.assertEquals("unsafe-response", exception.getCause() == null ? exception.getMessage() : exception.getCause().getMessage());
         Mockito.verify(aiCacheStatsService).recordMiss();
@@ -672,5 +674,11 @@ class AiGatewayServiceUsageRecordTest {
 
     private static <T> T eq(T value) {
         return Mockito.eq(value);
+    }
+
+    private ServerHttpRequest httpRequest() {
+        return MockServerHttpRequest.post("/v1/chat/completions")
+                .header("X-Request-Id", "req-usage-record")
+                .build();
     }
 }
