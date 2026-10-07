@@ -4,6 +4,9 @@ spring:
       auto-registration:
         enabled: true
     nacos:
+      config:
+        # 与 discovery 共用同一地址变量、同样不设默认值：NACOS_SERVER_ADDR 缺失直接启动失败
+        server-addr: ${NACOS_SERVER_ADDR}
       discovery:
         enabled: ${NACOS_DISCOVERY_ENABLED:true}
         register-enabled: ${NACOS_REGISTER_ENABLED:true}

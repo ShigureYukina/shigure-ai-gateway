@@ -5,7 +5,7 @@ This file is the operating guide for agentic coding assistants working in this r
 It captures how to build, test, and modify code safely in this Java/Spring WebFlux project.
 
 ## Project Snapshot
-- Stack: Java 17, Spring Boot 3.3.2, Spring Cloud Gateway, WebFlux, Redis.
+- Stack: Java 17, Spring Boot 3.3.2, WebFlux（自研转发层，未使用 Spring Cloud Gateway 路由）, Nacos（discovery + config）, Redis.
 - Build tool: Maven (`pom.xml` at repo root).
 - Main app: `src/main/java/com/nageoffer/shortlink/aigateway/AiGatewayApplication.java`.
 - Tests: JUnit 5 + Reactor Test under `src/test/java`.

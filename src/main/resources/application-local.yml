@@ -4,6 +4,10 @@ spring:
       auto-registration:
         enabled: false
     nacos:
+      config:
+        # 与 discovery 同策略：local 档不连 Nacos，避免后台客户端反复重连刷日志。
+        # 要本地试配置中心，用 -Dspring.cloud.nacos.config.enabled=true 覆盖（compose 起 nacos 后）。
+        enabled: false
       discovery:
         enabled: false
         register-enabled: false

@@ -9,6 +9,22 @@ jobs:
   build-test-package:
     runs-on: ubuntu-latest
 
+    services:
+      nacos:
+        image: nacos/nacos-server:v2.3.2
+        ports:
+          - "8848:8848"
+          - "9848:9848"
+          - "9849:9849"
+        env:
+          MODE: standalone
+          NACOS_AUTH_ENABLE: "false"
+        options: >-
+          --health-cmd "curl -fs http://localhost:8848/nacos/v1/console/health/readiness || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 30
+
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -20,7 +36,22 @@ jobs:
           java-version: '17'
           cache: maven
 
+      # 集成测试用的 dataId 必须在测试进程启动前写进 Nacos； readiness 轮询兜底服务容器慢启动
+      - name: Publish Nacos test config
+        run: |
+          for i in $(seq 1 60); do
+            if curl -fs http://127.0.0.1:8848/nacos/v1/console/health/readiness; then break; fi
+            sleep 2
+          done
+          curl -fs -X POST "http://127.0.0.1:8848/nacos/v1/cs/configs" \
+            --data-urlencode "dataId=short-link-ai-gateway-it.yml" \
+            --data-urlencode "group=DEFAULT_GROUP" \
+            --data-urlencode "type=yaml" \
+            --data-urlencode $'content=short-link:\n  ai-gateway:\n    rate-limit:\n      quota-retry-after-seconds: 99\n'
+
       - name: Build & Test
+        env:
+          NACOS_CONFIG_IT: "true"
         run: mvn -B clean verify
 
       - name: Package

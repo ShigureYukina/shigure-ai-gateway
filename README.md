@@ -66,9 +66,10 @@
 - **Language**: Java 17
 - **Framework**: Spring Boot 3.3.2, Spring WebFlux + WebClient（网关为自研转发层，未使用 Spring Cloud Gateway 路由）
 - **Data & Cache**: Redis, R2DBC(MySQL，可选)
+- **注册与配置中心**: Nacos（服务发现 + Config 动态配置，导入/刷新细节见 `docs/config/README.md`）
 - **Observability**: Micrometer, Prometheus, OpenTelemetry Tracing
-- **Test**: JUnit 5, Reactor Test, Testcontainers（Redis 集成测试）
-- **Build**: Maven
+- **Test**: JUnit 5, Reactor Test, Testcontainers（Redis 集成测试）, Nacos Config 导入集成测试（CI）
+- **Build**: Maven, Docker（多阶段镜像）
 
 ---
 
@@ -243,6 +244,7 @@ curl -X POST "http://127.0.0.1:8010/v1/tenant-config/provider-credentials/openai
 - `AI_GATEWAY_VIEWER_PASSWORD`
 - `REDIS_HOST` / `REDIS_PORT`
 - `NACOS_SERVER_ADDR`
+- `NACOS_CONFIG_ENABLED` / `NACOS_CONFIG_DATAID` / `NACOS_CONFIG_GROUP` / `NACOS_CONFIG_NAMESPACE`（配置中心开关与导入位置，默认 `short-link-ai-gateway.yml` + `DEFAULT_GROUP`）
 - `AI_GATEWAY_R2DBC_URL`
 - `AI_GATEWAY_DB_USERNAME`
 - `AI_GATEWAY_DB_PASSWORD`
@@ -388,3 +390,4 @@ powershell -ExecutionPolicy Bypass -File "scripts/simulate_e2e.ps1"
 - [x] 渠道多 Key 池 + 渠道级 RPM
 - [ ] 竞品对比文档（vs New API / Octopus / LiteLLM）
 - [x] 通道主动探测（定时健康测试 + 自动禁用/恢复）
+- [x] Nacos Config 配置中心（启动导入 + 动态刷新 + DB/Nacos/yml 优先级对账）—— 见 `docs/config/README.md`

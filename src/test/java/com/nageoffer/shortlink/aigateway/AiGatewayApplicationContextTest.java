@@ -37,6 +37,8 @@ import java.time.Duration;
 @SpringBootTest(properties = {
         "spring.cloud.nacos.discovery.enabled=false",
         "spring.cloud.service-registry.auto-registration.enabled=false",
+        // 同理：不连配置中心，config.import 的 optional: 前缀只是兜底，显式关掉省一次探测
+        "spring.cloud.nacos.config.enabled=false",
         "short-link.ai-gateway.tenant.persistence.enabled=false"
 })
 class AiGatewayApplicationContextTest {

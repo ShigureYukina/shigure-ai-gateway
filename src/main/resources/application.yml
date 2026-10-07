@@ -4,6 +4,10 @@ server:
 spring:
   application:
     name: short-link-ai-gateway
+  config:
+    # Nacos 配置中心（可选）：optional: 前缀保证 Nacos 不可达时只告警、照常启动；
+    # Nacos 上同名键会覆盖本文件的值（Nacos > yml），更高的 DB/环境变量优先级见 runtime 包
+    import: optional:nacos:${NACOS_CONFIG_DATAID:short-link-ai-gateway.yml}
   data:
     redis:
       host: ${REDIS_HOST:127.0.0.1}
@@ -20,6 +24,11 @@ spring:
       auto-registration:
         enabled: true
     nacos:
+      config:
+        enabled: ${NACOS_CONFIG_ENABLED:true}
+        server-addr: ${NACOS_SERVER_ADDR:127.0.0.1:8848}
+        group: ${NACOS_CONFIG_GROUP:DEFAULT_GROUP}
+        namespace: ${NACOS_CONFIG_NAMESPACE:}
       discovery:
         enabled: ${NACOS_DISCOVERY_ENABLED:true}
         register-enabled: ${NACOS_REGISTER_ENABLED:true}

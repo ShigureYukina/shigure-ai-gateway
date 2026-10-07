@@ -118,6 +118,27 @@ public class RuntimeConfigService {
     }
 
     /**
+     * 只重放"当前取值来自 DB"的域。
+     * <p>
+     * 场景：Nacos 等外部配置源触发整体重绑（{@code ConfigurationPropertiesRebinder} 会把
+     * {@link AiGatewayProperties} 从新 Environment 重绑一遍），运行时配置中心先前写进内存的
+     * DB 覆盖会被一并冲掉。这里在刷新后把落过库的域重新 apply，落实取值优先级：
+     * <b>环境变量 kill-switch &gt; DB &gt; Nacos &gt; yml</b>。
+     * <p>
+     * 刻意不碰没落库的域：它们的 Nacos 新值就是本次刷新的成果，重放到启动基线反而会把
+     * 刷新结果回滚掉。
+     */
+    public Mono<Void> reapplyDatabaseOverrides() {
+        if (repositoryProvider.getIfAvailable() == null) {
+            return Mono.empty();
+        }
+        return Flux.fromArray(RuntimeConfigDomain.values())
+                .filter(fromDatabase::contains)
+                .concatMap(this::reload)
+                .then();
+    }
+
+    /**
      * 重载单个域。库里没有该域的行 → 回落到启动时的 yml 基线。
      */
     public Mono<Void> reload(RuntimeConfigDomain domain) {
