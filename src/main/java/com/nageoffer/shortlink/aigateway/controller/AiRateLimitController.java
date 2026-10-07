@@ -104,13 +104,15 @@ public class AiRateLimitController {
     public Mono<Map<String, Object>> usage(@RequestParam("provider") String provider,
                                            @RequestParam("model") String model,
                                            ServerWebExchange exchange) {
+
+        // 这些头不再参与配额身份（服务端身份取 keyId/appId/远端地址），仅作排查预览展示
         HttpHeaders headers = exchange.getRequest().getHeaders();
         Map<String, Object> headerPreview = new LinkedHashMap<>();
         headerPreview.put("userId", headers.getFirst("userId"));
         headerPreview.put("xForwardedFor", headers.getFirst("X-Forwarded-For"));
         headerPreview.put("xRealIp", headers.getFirst("X-Real-IP"));
         headerPreview.put("xConsumer", headers.getFirst("X-Consumer"));
-        return redisTokenQuotaService.currentUsage(headers, provider, model)
+        return redisTokenQuotaService.currentUsage(exchange.getRequest(), provider, model)
                 .map(usage -> {
                     Map<String, Object> response = new LinkedHashMap<>(usage);
                     response.put("headerPreview", headerPreview);

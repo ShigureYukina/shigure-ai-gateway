@@ -26,6 +26,7 @@ import io.micrometer.tracing.Span;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.server.reactive.ServerHttpRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 import reactor.core.publisher.Flux;
@@ -104,7 +105,8 @@ public class AiGatewayService {
      * <p>
      * 主要阶段：路由 -> 缓存 -> 配额 -> 适配转换 -> 上游调用 -> 输出治理 -> 结算与指标。
      */
-    public Mono<String> chatCompletion(AiChatCompletionReqDTO request, HttpHeaders headers, TenantContext tenantContext) {
+    public Mono<String> chatCompletion(AiChatCompletionReqDTO request, ServerHttpRequest httpRequest, TenantContext tenantContext) {
+        HttpHeaders headers = httpRequest.getHeaders();
         Span span = aiGatewayTracer.startSpan("ai-gateway.chat-completion");
         RoutingPlanResolver.RoutingPlan plan = routingPlanResolver.resolve(tenantContext, request.getModel(), headers);
         // 生效模型必须回写：租户映射后的名字才是真正要发的，也是缓存键的依据
@@ -133,10 +135,17 @@ public class AiGatewayService {
             Instant start = Instant.now();
             UpstreamCallContext callContext = new UpstreamCallContext(
                     routeTargets, request, forwardHeaders, requestId, tenantContext, start);
-            return redisTokenQuotaService.preCheck(tenantContext, headers, routing.getProvider(), routing.getProviderModel(), request)
-                    .doOnNext(quotaContext -> tracePublisher.publish(requestId, tenantContext, AiRequestTraceEvent.STAGE_QUOTA, "ok",
-                            routing.getProvider(), routing.getProviderModel(),
-                            "reservedTokens=" + quotaContext.getReservedTokens(), start, Boolean.FALSE))
+            return redisTokenQuotaService.preCheck(tenantContext, httpRequest, routing.getProvider(), routing.getProviderModel(), request)
+                    // 限流响应头必须在预检时刻落快照：结算（尤其 SSE 的流结束）发生在响应提交之后，
+                    // 那时再 record，beforeCommit 的 consume 永远扑空，还会在快照表里留下永不清理的条目
+                    .doOnNext(quotaContext -> {
+                        rateLimitHeaderService.record(requestId, rateLimitHeaderService.buildTokenHeaders(
+                                quotaContext.getMinuteQuota(), quotaContext.getMinuteUsedAfterReserve(),
+                                quotaContext.getDayQuota(), quotaContext.getDayUsedAfterReserve()));
+                        tracePublisher.publish(requestId, tenantContext, AiRequestTraceEvent.STAGE_QUOTA, "ok",
+                                routing.getProvider(), routing.getProviderModel(),
+                                "reservedTokens=" + quotaContext.getReservedTokens(), start, Boolean.FALSE);
+                    })
                     .flatMap(quotaContext -> upstreamCallExecutor.callWithFallback(callContext)
                             .doOnSuccess(attemptResult -> {
                                 String body = attemptResult.body();
@@ -329,7 +338,8 @@ public class AiGatewayService {
      *   <li>客户端取消要退还预扣配额，否则断开的流会持续占用额度。</li>
      * </ul>
      */
-    public Flux<String> streamChatCompletion(AiChatCompletionReqDTO request, HttpHeaders headers, TenantContext tenantContext) {
+    public Flux<String> streamChatCompletion(AiChatCompletionReqDTO request, ServerHttpRequest httpRequest, TenantContext tenantContext) {
+        HttpHeaders headers = httpRequest.getHeaders();
         Span span = aiGatewayTracer.startSpan("ai-gateway.stream-chat-completion");
         RoutingPlanResolver.RoutingPlan plan = routingPlanResolver.resolve(tenantContext, request.getModel(), headers);
         request.setModel(plan.effectiveModel());
@@ -350,10 +360,15 @@ public class AiGatewayService {
         UpstreamCallContext callContext = new UpstreamCallContext(
                 routeTargets, request, forwardHeaders, requestId, tenantContext, start);
 
-        return redisTokenQuotaService.preCheck(tenantContext, headers, routing.getProvider(), routing.getProviderModel(), request)
-                .doOnNext(quotaContext -> tracePublisher.publish(requestId, tenantContext, AiRequestTraceEvent.STAGE_QUOTA, "ok",
-                        routing.getProvider(), routing.getProviderModel(),
-                        "reservedTokens=" + quotaContext.getReservedTokens(), start, Boolean.TRUE))
+        return redisTokenQuotaService.preCheck(tenantContext, httpRequest, routing.getProvider(), routing.getProviderModel(), request)
+                .doOnNext(quotaContext -> {
+                    rateLimitHeaderService.record(requestId, rateLimitHeaderService.buildTokenHeaders(
+                            quotaContext.getMinuteQuota(), quotaContext.getMinuteUsedAfterReserve(),
+                            quotaContext.getDayQuota(), quotaContext.getDayUsedAfterReserve()));
+                    tracePublisher.publish(requestId, tenantContext, AiRequestTraceEvent.STAGE_QUOTA, "ok",
+                            routing.getProvider(), routing.getProviderModel(),
+                            "reservedTokens=" + quotaContext.getReservedTokens(), start, Boolean.TRUE);
+                })
                 .flatMapMany(quotaContext -> {
                     AtomicBoolean finalized = new AtomicBoolean(false);
                     AtomicBoolean firstTokenSeen = new AtomicBoolean(false);
@@ -448,16 +463,6 @@ public class AiGatewayService {
      */
     private void settleQuota(QuotaPreCheckContext quotaContext, long actualTokens, String requestId) {
         redisTokenQuotaService.adjustByActualUsage(quotaContext, actualTokens)
-                .doOnNext(settleResult -> {
-                    if (settleResult == null) {
-                        return;
-                    }
-                    rateLimitHeaderService.record(requestId, rateLimitHeaderService.buildTokenHeaders(
-                            quotaContext.getMinuteQuota(),
-                            settleResult.minuteUsed(),
-                            quotaContext.getDayQuota(),
-                            settleResult.dayUsed()));
-                })
                 .subscribe(ignored -> {
                 }, ex -> log.warn("failed to settle token quota: requestId={}", requestId, ex));
     }

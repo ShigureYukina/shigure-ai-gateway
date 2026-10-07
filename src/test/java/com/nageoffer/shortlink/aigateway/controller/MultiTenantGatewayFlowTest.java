@@ -152,8 +152,9 @@ class MultiTenantGatewayFlowTest {
                 .build());
 
         ReactiveStringRedisTemplate redisTemplate = Mockito.mock(ReactiveStringRedisTemplate.class);
-        Mockito.when(redisTemplate.execute(ArgumentMatchers.<RedisScript<Long>>any(), anyList(), anyList()))
-                .thenReturn(Flux.just(0L));
+        // 预检脚本新契约：{allowed, minuteAfterReserve, dayAfterReserve}，拒绝路径同样回传三元素
+        Mockito.when(redisTemplate.execute(ArgumentMatchers.<RedisScript<List>>any(), anyList(), anyList()))
+                .thenReturn(Flux.just(List.of(0L, 0L, 0L)));
 
         SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
         AiGatewayMetricsRecorder metricsRecorder = metricsRecorder(properties, meterRegistry);

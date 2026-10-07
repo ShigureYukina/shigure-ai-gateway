@@ -80,13 +80,13 @@ public class AiNativeProtocolController {
             String clientModel = request.getModel();
             if (Boolean.TRUE.equals(request.getStream())) {
                 Flux<ServerSentEvent<String>> stream = anthropicStreamMapper.toEventStream(
-                        aiGatewayService.streamChatCompletion(request, exchange.getRequest().getHeaders(), tenantContext),
+                        aiGatewayService.streamChatCompletion(request, exchange.getRequest(), tenantContext),
                         clientModel);
                 return Mono.just(ResponseEntity.ok()
                         .contentType(MediaType.TEXT_EVENT_STREAM)
                         .body((Object) stream));
             }
-            return aiGatewayService.chatCompletion(request, exchange.getRequest().getHeaders(), tenantContext)
+            return aiGatewayService.chatCompletion(request, exchange.getRequest(), tenantContext)
                     .map(openAiBody -> ResponseEntity.ok()
                             .contentType(MediaType.APPLICATION_JSON)
                             .body((Object) anthropicMessagesMapper.toMessageResponse(openAiBody, clientModel)));
@@ -119,13 +119,13 @@ public class AiNativeProtocolController {
             String clientModel = request.getModel();
             if (Boolean.TRUE.equals(request.getStream())) {
                 Flux<ServerSentEvent<String>> stream = responsesStreamMapper.toEventStream(
-                        aiGatewayService.streamChatCompletion(request, exchange.getRequest().getHeaders(), tenantContext),
+                        aiGatewayService.streamChatCompletion(request, exchange.getRequest(), tenantContext),
                         clientModel);
                 return Mono.just(ResponseEntity.ok()
                         .contentType(MediaType.TEXT_EVENT_STREAM)
                         .body((Object) stream));
             }
-            return aiGatewayService.chatCompletion(request, exchange.getRequest().getHeaders(), tenantContext)
+            return aiGatewayService.chatCompletion(request, exchange.getRequest(), tenantContext)
                     .map(openAiBody -> ResponseEntity.ok()
                             .contentType(MediaType.APPLICATION_JSON)
                             .body((Object) openAiResponsesMapper.toResponse(openAiBody, clientModel)));

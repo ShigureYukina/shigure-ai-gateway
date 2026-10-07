@@ -51,9 +51,9 @@ public class AiGatewayController {
         if (Boolean.TRUE.equals(requestParam.getStream())) {
             return Mono.just(ResponseEntity.ok()
                     .contentType(MediaType.TEXT_EVENT_STREAM)
-                    .body(aiGatewayService.streamChatCompletion(requestParam, exchange.getRequest().getHeaders(), tenantContext)));
+                    .body(aiGatewayService.streamChatCompletion(requestParam, exchange.getRequest(), tenantContext)));
         }
-        return aiGatewayService.chatCompletion(requestParam, exchange.getRequest().getHeaders(), tenantContext)
+        return aiGatewayService.chatCompletion(requestParam, exchange.getRequest(), tenantContext)
                 .map(result -> ResponseEntity.ok()
                         .contentType(MediaType.APPLICATION_JSON)
                         .body((Object) result));
