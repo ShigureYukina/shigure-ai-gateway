@@ -134,7 +134,9 @@ short-link:
       default-token-quota-per-day: 1000000
       min-token-reserve: 128
       quota-retry-after-seconds: 60
-      key-dimensions: [userId, ip, consumer]
+      # 配额维度只允许服务端身份：userId→认证 keyId、consumer→认证 appId、ip→连接远端地址；
+      # 客户端请求头可任意伪造，不再参与配额键。自定义维度（如可信代理覆写的 X-Real-IP）需显式配置
+      key-dimensions: [ip]
     cache:
       enabled: false
       ttl: 2m

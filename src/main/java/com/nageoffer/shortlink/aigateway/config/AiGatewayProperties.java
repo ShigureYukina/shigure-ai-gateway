@@ -223,7 +223,9 @@ public class AiGatewayProperties {
          */
         private Long quotaRetryAfterSeconds = 60L;
 
-        private List<String> keyDimensions = new ArrayList<>(List.of("userId", "ip", "consumer"));
+        // 默认只留 ip：userId/consumer 维度已改取服务端身份（keyId/appId，本就在键前缀里），
+        // 客户端头里的同名维度是可伪造的，不再默认参与配额身份
+        private List<String> keyDimensions = new ArrayList<>(List.of("ip"));
     }
 
     @Data

@@ -11,7 +11,7 @@ import com.nageoffer.shortlink.aigateway.tenant.TenantContext;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.ReactiveStringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
-import org.springframework.http.HttpHeaders;
+import org.springframework.http.server.reactive.ServerHttpRequest;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Mono;
 
@@ -32,7 +32,7 @@ public class RedisTokenQuotaService {
      * 预检脚本：先判断三个维度的配额是否够，够才扣减并设置 TTL。
      * 作为静态常量复用，避免每次请求都重新构造脚本对象。
      */
-    private static final DefaultRedisScript<Long> TOKEN_QUOTA_SCRIPT = new DefaultRedisScript<>("""
+    private static final DefaultRedisScript<List> TOKEN_QUOTA_SCRIPT = new DefaultRedisScript<>("""
             local minuteCurrent = tonumber(redis.call('GET', KEYS[1]) or '0')
             local dayCurrent = tonumber(redis.call('GET', KEYS[2]) or '0')
             local monthCurrent = tonumber(redis.call('GET', KEYS[3]) or '0')
@@ -45,13 +45,13 @@ public class RedisTokenQuotaService {
             local monthTtl = tonumber(ARGV[7])
 
             if (minuteCurrent + delta > minuteLimit) then
-                return 0
+                return {0, minuteCurrent, dayCurrent}
             end
             if (dayCurrent + delta > dayLimit) then
-                return 0
+                return {0, minuteCurrent, dayCurrent}
             end
             if (monthCurrent + delta > monthLimit) then
-                return 0
+                return {0, minuteCurrent, dayCurrent}
             end
 
             local minuteNew = redis.call('INCRBY', KEYS[1], delta)
@@ -69,8 +69,11 @@ public class RedisTokenQuotaService {
                 redis.call('EXPIRE', KEYS[3], monthTtl)
             end
 
-            return 1
-            """, Long.class);
+            -- 回传预扣后的分钟/天窗口用量：限流响应头必须在响应提交前落好，
+            -- 结算时刻（尤其 SSE 是流结束）再记已经赶不上，只能在这里顺路带回
+            return {1, minuteNew, dayNew}
+            """, List.class);
+
 
     /**
      * 补偿脚本：实际用量低于预留时归还不超过当前值的差额，并保留原有 TTL。
@@ -191,13 +194,13 @@ public class RedisTokenQuotaService {
      * <p>
      * 返回 {@link Mono} 而非同步对象，避免阻塞 Netty 事件循环。
      */
-    public Mono<QuotaPreCheckContext> preCheck(TenantContext tenantContext, HttpHeaders headers, String provider, String providerModel, AiChatCompletionReqDTO request) {
+    public Mono<QuotaPreCheckContext> preCheck(TenantContext tenantContext, ServerHttpRequest httpRequest, String provider, String providerModel, AiChatCompletionReqDTO request) {
         if (!properties.getRateLimit().isEnabled()) {
             return Mono.just(QuotaPreCheckContext.builder().reservedTokens(0).build());
         }
         TokenEstimateResult estimate = tokenEstimator.estimate(request);
         long reserve = estimate.totalReserve();
-        String quotaKey = quotaKeyGenerator.build(tenantContext, headers, provider, providerModel);
+        String quotaKey = quotaKeyGenerator.build(tenantContext, httpRequest, provider, providerModel);
         String minuteKey = QUOTA_PREFIX + "minute:" + quotaKey;
         String dayKey = QUOTA_PREFIX + "day:" + LocalDate.now(ZoneId.systemDefault()) + ":" + quotaKey;
         String monthKey = QUOTA_PREFIX + "month:" + YearMonth.now(ZoneId.systemDefault()) + ":" + quotaKey;
@@ -221,8 +224,9 @@ public class RedisTokenQuotaService {
 
         return reactiveStringRedisTemplate.execute(TOKEN_QUOTA_SCRIPT, keys, args)
                 .next()
-                .defaultIfEmpty(0L)
-                .flatMap(allowed -> {
+                .defaultIfEmpty(List.of(0L))
+                .flatMap(scriptResult -> {
+                    long allowed = parseLongOrZero(scriptResult.size() > 0 ? scriptResult.get(0) : 0L);
                     if (allowed == 0L) {
                         metricsRecorder.recordTenantQuotaEvent(tenantIdOf(tenantContext), appIdOf(tenantContext), provider, providerModel, "reject", reserve);
                         return Mono.error(new AiGatewayClientException(AiGatewayErrorCode.QUOTA_EXCEEDED, "Token 配额不足，已触发限流"));
@@ -238,6 +242,8 @@ public class RedisTokenQuotaService {
                             .minuteQuota(minuteQuota)
                             .dayQuota(dayQuota)
                             .monthQuota(monthQuota)
+                            .minuteUsedAfterReserve(parseLongOrZero(scriptResult.size() > 1 ? scriptResult.get(1) : 0L))
+                            .dayUsedAfterReserve(parseLongOrZero(scriptResult.size() > 2 ? scriptResult.get(2) : 0L))
                             .minuteKey(minuteKey)
                             .dayKey(dayKey)
                             .monthKey(monthKey)
@@ -309,12 +315,12 @@ public class RedisTokenQuotaService {
                 .then();
     }
 
-    public Mono<Map<String, Object>> currentUsage(HttpHeaders headers, String provider, String providerModel) {
-        return currentUsage(null, headers, provider, providerModel);
+    public Mono<Map<String, Object>> currentUsage(ServerHttpRequest httpRequest, String provider, String providerModel) {
+        return currentUsage(null, httpRequest, provider, providerModel);
     }
 
-    public Mono<Map<String, Object>> currentUsage(TenantContext tenantContext, HttpHeaders headers, String provider, String providerModel) {
-        String quotaKey = quotaKeyGenerator.build(tenantContext, headers, provider, providerModel);
+    public Mono<Map<String, Object>> currentUsage(TenantContext tenantContext, ServerHttpRequest httpRequest, String provider, String providerModel) {
+        String quotaKey = quotaKeyGenerator.build(tenantContext, httpRequest, provider, providerModel);
         String minuteKey = QUOTA_PREFIX + "minute:" + quotaKey;
         String dayKey = QUOTA_PREFIX + "day:" + LocalDate.now(ZoneId.systemDefault()) + ":" + quotaKey;
         String monthKey = QUOTA_PREFIX + "month:" + YearMonth.now(ZoneId.systemDefault()) + ":" + quotaKey;
