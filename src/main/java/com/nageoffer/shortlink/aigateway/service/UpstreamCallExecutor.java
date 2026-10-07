@@ -39,6 +39,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Predicate;
 
@@ -126,18 +127,24 @@ public class UpstreamCallExecutor {
     /**
      * 流式调用：与 {@link #callWithFallback} 同一套回退规则，只是终态是流。
      *
+     * <p>回退有一条硬边界：<b>只允许发生在首字节之前</b>。一旦本链路已向下游
+     * 吐出过任何一个事件（响应头之后客户端已在收 SSE），再切供应商就会让客户端
+     * 收到「A 家半截响应 + B 家完整响应」拼接的两段流，SDK 必然解析错乱；
+     * 此时即使上游中途断流，也只能以错误帧收场（由编排层的 onErrorResume 统一转换）。
+     *
      * @param servingRoute 记录实际服务的那个目标，供调用方在终态结算时归因（回退后与主路由不同）
      */
     public Flux<String> callStreamWithFallback(UpstreamCallContext context,
                                                StreamUsageCollector collector,
                                                AtomicReference<RouteTarget> servingRoute) {
-        return callStreamWithFallback(context, 0, collector, servingRoute);
+        return callStreamWithFallback(context, 0, collector, servingRoute, new AtomicBoolean(false));
     }
 
     private Flux<String> callStreamWithFallback(UpstreamCallContext context,
                                                 int index,
                                                 StreamUsageCollector collector,
-                                                AtomicReference<RouteTarget> servingRoute) {
+                                                AtomicReference<RouteTarget> servingRoute,
+                                                AtomicBoolean chunkServed) {
         RouteTarget routeTarget = context.target(index);
         return Flux.defer(() -> {
                     servingRoute.set(routeTarget);
@@ -145,7 +152,7 @@ public class UpstreamCallExecutor {
                             routeTarget.upstreamUri(), Boolean.TRUE);
                     return Flux.from(providerRateLimitService.tryAcquire(routeTarget.provider()))
                             .flatMap(allowed -> allowed
-                                    ? forwardStream(context, routeTarget, collector)
+                                    ? forwardStream(context, routeTarget, collector, chunkServed)
                                     : Flux.error(rateLimited(routeTarget)));
                 })
                 .onErrorResume(ex -> {
@@ -154,12 +161,17 @@ public class UpstreamCallExecutor {
                         providerRoutingService.recordProviderOutcome(routeTarget.provider(), routeTarget.providerModel(),
                                 Duration.between(context.start(), Instant.now()).toMillis(), false, 0L, 0L);
                     }
-                    if (channelFault && context.hasNext(index)) {
+                    if (channelFault && context.hasNext(index) && !chunkServed.get()) {
                         publishStage(context, routeTarget, AiRequestTraceEvent.STAGE_FALLBACK, "error",
                                 ex.getMessage(), Boolean.TRUE);
                         log.warn("stream route failed, fallback to next provider: requestId={}, provider={}, reason={}",
                                 context.requestId(), routeTarget.provider(), ex.getMessage());
-                        return callStreamWithFallback(context, index + 1, collector, servingRoute);
+                        return callStreamWithFallback(context, index + 1, collector, servingRoute, chunkServed);
+                    }
+                    if (channelFault && chunkServed.get()) {
+                        // 已经向客户端吐过流：切供应商只会拼出第二段响应，只能以错误帧收场
+                        log.warn("stream interrupted after first chunk, fallback disabled: requestId={}, provider={}, reason={}",
+                                context.requestId(), routeTarget.provider(), ex.getMessage());
                     }
                     return Flux.error(ex);
                 });
@@ -208,9 +220,12 @@ public class UpstreamCallExecutor {
 
     /**
      * 流式版本：成功以流正常结束为准，失败按具体异常归因到这把 Key。
+     * <p>
+     * {@code chunkServed} 在真正向下游吐出事件时置位——它是「禁止再回退」的边界，
+     * 取样点放在链路最末端（安全过滤之后），保证与客户端实际收到的事件一一对应。
      */
     private Flux<String> forwardStream(UpstreamCallContext context, RouteTarget routeTarget,
-                                       StreamUsageCollector collector) {
+                                       StreamUsageCollector collector, AtomicBoolean chunkServed) {
         ProviderAdapter adapter = resolveAdapter(routeTarget.provider());
         AiCanonicalChatRequest canonicalRequest = buildCanonicalRequest(context.request(), routeTarget.provider(),
                 routeTarget.providerModel());
@@ -246,6 +261,7 @@ public class UpstreamCallExecutor {
                         .latencyMillis(Duration.between(context.start(), Instant.now()).toMillis())
                         .build()))
                 .map(aiSafetyGuard::processOutput)
+                .doOnNext(body -> chunkServed.set(true))
                 .doOnComplete(() -> upstreamCredentialService.reportOutcome(upstreamCall.lease(), true, null))
                 .doOnError(ex -> upstreamCredentialService.reportOutcome(upstreamCall.lease(), false, ex));
     }
