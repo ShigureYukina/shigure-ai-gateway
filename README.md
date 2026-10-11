@@ -373,6 +373,7 @@ powershell -ExecutionPolicy Bypass -File "scripts/simulate_e2e.ps1"
 - 安全扫描：OWASP Dependency-Check（按需运行 `mvn dependency-check:check`，未纳入 CI）
 - 协作规范：`AGENTS.md`
 - API 清单：`docs/api-inventory.md`
+- 产品文档：`docs/product/`（PRD 与竞品分析）
 - 性能基线：`docs/load/README.md`（稳态 P50 37.7ms / P95 44.6ms / 503 RPS，网关开销 ≈1.7ms）
 
 ---
@@ -388,6 +389,6 @@ powershell -ExecutionPolicy Bypass -File "scripts/simulate_e2e.ps1"
 - [x] 实时请求链路可视化（SSE + 控制台时间线）
 - [x] 原生协议入口（Anthropic Messages / OpenAI Responses）
 - [x] 渠道多 Key 池 + 渠道级 RPM
-- [ ] 竞品对比文档（vs New API / Octopus / LiteLLM）
+- [x] 竞品对比文档（vs New API / Octopus / LiteLLM）—— 见 `docs/product/竞品分析-AI网关.md`（Octopus 经检索核实指向 bestruirui/octopus）
 - [x] 通道主动探测（定时健康测试 + 自动禁用/恢复）
 - [x] Nacos Config 配置中心（启动导入 + 动态刷新 + DB/Nacos/yml 优先级对账）—— 见 `docs/config/README.md`
