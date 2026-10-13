@@ -97,10 +97,12 @@ flowchart LR
 - Maven（`mvn`）
 - Docker（可选，推荐用于启动 Redis）
 
-### 2) 启动 Redis
+### 2) 启动依赖 / 一键全栈
 
 ```bash
-docker compose up -d redis
+docker compose up -d redis          # 只起依赖，应用跑在宿主机/IDE
+docker compose up -d                # 一键全栈：redis + mysql + nacos + 应用镜像（Dockerfile 多阶段构建）
+                                    # 前置：.env 里配置 AI_GATEWAY_DB_PASSWORD（模板见 .env.example）
 ```
 
 ### 3) 启动网关（local profile）
@@ -281,7 +283,7 @@ mvn -Dtest=ProviderRoutingServiceTest test
 mvn -Dtest=ProviderRoutingServiceTest#shouldResolveAliasProviderAndModel test
 
 # 多个测试类
-mvn -Dtest=ProviderRoutingServiceTest,SseStreamE2ETest test
+mvn -Dtest=ProviderRoutingServiceTest,SseStreamContractTest test
 ```
 
 JaCoCo 报告：`target/site/jacoco/index.html`
@@ -384,6 +386,8 @@ powershell -ExecutionPolicy Bypass -File "scripts/simulate_e2e.ps1"
 - [ ] 补充 Prometheus + Grafana 可视化面板
 - [ ] 增加真实上游 smoke test（受控 key / 限额）
 - [x] 输出性能基线（P95、错误率、吞吐）—— 见 `docs/load/README.md`
+- [x] 故障注入（上游 500 / 429 / 不回包）下的网关表现—— 见 `docs/load/fault-injection.md`
+      （该次采集 CPU 限到 4 核，绝对吞吐不可与性能基线并列；跨供应商回退仍未覆盖）
 - [x] 通道组 + 五种负载均衡策略（优先级降级 / 轮询 / 随机 / 加权 / 动态健康分）
 - [x] 模型清单与价格自动同步（models.dev + 渠道 `/v1/models`）
 - [x] 实时请求链路可视化（SSE + 控制台时间线）

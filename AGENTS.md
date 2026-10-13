@@ -51,7 +51,7 @@ mvn -Dtest=ProviderRoutingServiceTest test
 mvn -Dtest=ProviderRoutingServiceTest#shouldResolveAliasProviderAndModel test
 
 # Multiple specific classes
-mvn -Dtest=ProviderRoutingServiceTest,SseStreamE2ETest test
+mvn -Dtest=ProviderRoutingServiceTest,SseStreamContractTest test
 ```
 
 ### Suggested Fast Loops
