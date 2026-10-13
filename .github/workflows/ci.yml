@@ -68,3 +68,39 @@ jobs:
         with:
           name: jacoco-report
           path: target/site/jacoco/
+
+  # 应用镜像的构建与冒烟：多阶段构建（Maven 层内嵌）→ 起依赖容器 → 跑容器 → 健康检查
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Build image
+        run: docker build -t shortlink-ai-gateway:ci .
+
+      - name: Start dependency containers
+        run: |
+          docker network create ci-net
+          docker run -d --name redis --network ci-net redis:7.2-alpine
+          docker run -d --name mysql --network ci-net \
+            -e MYSQL_ROOT_PASSWORD=ci-smoke -e MYSQL_DATABASE=ai_gateway -e TZ=Asia/Shanghai \
+            mysql:8.0
+
+      - name: Run container & smoke test
+        run: |
+          docker run -d --name ai-gateway-app --network ci-net -p 8010:8010 \
+            -e REDIS_HOST=redis \
+            -e AI_GATEWAY_R2DBC_URL=r2dbc:pool:mysql://mysql:3306/ai_gateway \
+            -e AI_GATEWAY_DB_USERNAME=root -e AI_GATEWAY_DB_PASSWORD=ci-smoke \
+            -e NACOS_DISCOVERY_ENABLED=false -e NACOS_REGISTER_ENABLED=false -e NACOS_CONFIG_ENABLED=false \
+            shortlink-ai-gateway:ci
+          for i in $(seq 1 60); do
+            if curl -fs http://localhost:8010/actuator/health | grep -q '"status":"UP"'; then
+              echo "container healthy"; exit 0
+            fi
+            sleep 3
+          done
+          echo "::error::container failed to become healthy"
+          docker logs ai-gateway-app | tail -80
+          exit 1

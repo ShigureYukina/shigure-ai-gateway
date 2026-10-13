@@ -1,8 +1,6 @@
-version: '3.8'
-
 services:
   redis:
-    image: redis:7.2-alpine
+    image: ${IMAGE_PREFIX:-}redis:7.2-alpine
     container_name: ai-gateway-redis
     ports:
       - "6379:6379"
@@ -14,7 +12,7 @@ services:
       retries: 20
 
   nacos:
-    image: nacos/nacos-server:v2.3.2
+    image: ${IMAGE_PREFIX:-}nacos/nacos-server:v2.3.2
     container_name: ai-gateway-nacos
     ports:
       - "8848:8848"    # HTTP 控制台 / OpenAPI（2.x 客户端 gRPC 端口 = 8848+1000，必须一起暴露）
@@ -31,8 +29,33 @@ services:
       retries: 30
       start_period: 30s
 
+  # 应用容器：多阶段构建（Maven → layertools 分层 → JRE），见 Dockerfile
+  # 必需密钥走 .env（AI_GATEWAY_DB_PASSWORD 缺失时 compose 直接报错）
+  app:
+    build:
+      context: .
+      args:
+        IMAGE_PREFIX: ${IMAGE_PREFIX:-}
+    image: shortlink-ai-gateway:local
+    container_name: ai-gateway-app
+    ports:
+      - "8010:8010"
+    environment:
+      REDIS_HOST: redis
+      AI_GATEWAY_R2DBC_URL: r2dbc:pool:mysql://mysql:3306/ai_gateway
+      AI_GATEWAY_DB_PASSWORD: ${AI_GATEWAY_DB_PASSWORD:?请在 .env 中配置 AI_GATEWAY_DB_PASSWORD}
+      NACOS_SERVER_ADDR: nacos:8848
+      TZ: Asia/Shanghai
+    depends_on:
+      redis:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+      nacos:
+        condition: service_healthy
+
   mysql:
-    image: mysql:8.0
+    image: ${IMAGE_PREFIX:-}mysql:8.0
     container_name: ai-gateway-mysql
     ports:
       - "3306:3306"
