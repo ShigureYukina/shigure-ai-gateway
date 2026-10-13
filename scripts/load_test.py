@@ -115,7 +115,14 @@ def main():
     parser.add_argument("--requests", type=int, default=80)
     parser.add_argument("--concurrency", type=int, default=10)
     parser.add_argument("--output", default="target/load-test-summary.json")
+    parser.add_argument("--only", default=None,
+                        help="comma-separated scenario names to run (default: all). "
+                             "Fault-injection runs pass the single scenario they care about, "
+                             "because the unrelated scenarios would each pay the injected "
+                             "upstream delay on every request.")
     args = parser.parse_args()
+
+    selected = set(args.only.split(",")) if args.only else None
 
     base_headers = {"Content-Type": "application/json"}
     auth_headers = {
@@ -166,6 +173,9 @@ def main():
         max(2, min(args.concurrency, 5)),
         lambda _: make_request(f"{args.base_url}/v1/chat/completions", method="POST", headers=auth_headers, body=forbidden_body),
     ))
+
+    if selected is not None:
+        scenarios = [item for item in scenarios if item["scenario"] in selected]
 
     with open(args.output, "w", encoding="utf-8") as output_file:
         json.dump({"base_url": args.base_url, "scenarios": scenarios}, output_file, ensure_ascii=False, indent=2)

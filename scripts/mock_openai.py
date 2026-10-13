@@ -11,6 +11,8 @@ CONFIG = {
     "jitter_ms": 0,
     "chunk_count": 20,
     "error_rate": 0.0,
+    "rate_limit_rate": 0.0,
+    "hang_ms": 0.0,
 }
 
 
@@ -50,9 +52,27 @@ class MockHandler(BaseHTTPRequestHandler):
         is_stream = '"stream":true' in compact
         model = self._extract_model(body)
 
+        # 故障注入。三个通道各自独立取样，先 429 再 500：
+        # 429 在网关侧被归类为 PROVIDER_RATE_LIMITED（属于通道故障，会触发冷却与回退），
+        # 与 500 走的是不同的归因分支，分开测才有意义。
+        if CONFIG["rate_limit_rate"] > 0 and random.random() < CONFIG["rate_limit_rate"]:
+            self.send_response(429)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Retry-After", "1")
+            payload = b'{"error":{"message":"injected upstream rate limit","type":"rate_limit_error"}}'
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+            return
+
         if CONFIG["error_rate"] > 0 and random.random() < CONFIG["error_rate"]:
             self._send_json(500, b'{"error":{"message":"injected upstream error"}}')
             return
+
+        if CONFIG["hang_ms"] > 0:
+            # 收到请求但迟迟不回包，且不主动断开 —— 这是最难处理的一种：连接被无限期占住，
+            # 只有网关侧的读超时能救回来。配合 --read-timeout 调小来构造，不要用默认 60s。
+            time.sleep(CONFIG["hang_ms"] / 1000.0)
 
         if is_stream:
             self._handle_stream(model)
@@ -148,6 +168,12 @@ def parse_args():
     parser.add_argument("--jitter-ms", type=float, default=0.0, help="random jitter applied per request (ms)")
     parser.add_argument("--chunk-count", type=int, default=20, help="SSE chunks emitted for a stream response")
     parser.add_argument("--error-rate", type=float, default=0.0, help="fraction of requests answered with 500")
+    parser.add_argument("--rate-limit-rate", type=float, default=0.0,
+                        help="fraction of requests answered with 429 + Retry-After")
+    parser.add_argument("--hang-ms", type=float, default=0.0,
+                        help="extra delay before answering, without closing the connection "
+                             "(exercise the gateway read-timeout path; shorten the gateway's "
+                             "timeout-retry.read-timeout so this does not take 60s)")
     parser.add_argument("--seed", type=int, default=None, help="random seed for reproducible jitter")
     return parser.parse_args()
 
@@ -162,13 +188,16 @@ def main():
         "jitter_ms": args.jitter_ms,
         "chunk_count": args.chunk_count,
         "error_rate": args.error_rate,
+        "rate_limit_rate": args.rate_limit_rate,
+        "hang_ms": args.hang_ms,
     })
 
     server = MockServer((args.host, args.port), MockHandler)
     print(
         f"mock-openai listening on {args.host}:{args.port} "
         f"(ttft={args.ttft_ms}ms latency={args.latency_ms}ms jitter={args.jitter_ms}ms "
-        f"chunks={args.chunk_count} error_rate={args.error_rate})",
+        f"chunks={args.chunk_count} error_rate={args.error_rate} "
+        f"rate_limit_rate={args.rate_limit_rate} hang_ms={args.hang_ms})",
         flush=True,
     )
     try:
