@@ -147,5 +147,8 @@ docker run --rm --network aigw-net -v "$CTX/scripts:/scripts" -v "$CTX/docs/load
 
 - 上游是 mock，不是真实 LLM：没有真实网络抖动、TTFT 长尾和供应商侧限流。
 - 缓存、限流、安全过滤、熔断 fallback 均为关闭状态，这些路径的延迟没有覆盖。
-- 未做故障注入（上游 500/超时/慢响应）下的网关表现。
+- 未做故障注入（上游 500/超时/慢响应）下的网关表现。已补测，见
+  [`fault-injection.md`](./fault-injection.md)。该次采集的 CPU 被 `.wslconfig` 限到 4 核
+  （本文基线是 12 核），所以它的绝对吞吐（390 RPS）低于本文的 503 RPS，
+  **本文仍是权威口径**；故障注入文档里只有场景之间的相对结论可直接引用。
 - 未做长时间稳定性（内存、连接泄漏）观察，单轮最长约 1.5 秒。

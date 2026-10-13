@@ -1,0 +1,36 @@
+{
+  "base_url": "http://aigw-gateway:8010",
+  "scenarios": [
+    {
+      "scenario": "non_stream_success",
+      "requests": 200,
+      "concurrency": 20,
+      "success": 198,
+      "failure": 2,
+      "success_rate": 0.99,
+      "throughput_rps": 360.12,
+      "wall_seconds": 0.555,
+      "latency_ms": {
+        "avg": 52.36,
+        "p50": 48.94,
+        "p95": 82.14,
+        "p99": 99.32,
+        "max": 106.14
+      },
+      "first_byte_ms": {
+        "avg": null,
+        "p50": null,
+        "p95": null,
+        "max": null
+      },
+      "status_counts": {
+        "200": 198,
+        "504": 2
+      },
+      "sample_errors": [
+        "{\"status\":504,\"message\":\"上游重试耗尽: 上游响应异常: status=500, body={\\\"error\\\":{\\\"message\\\":\\\"injected upstream error\\\"}}\",\"error\":{\"message\":\"上游重试耗尽: 上游响应异常: status=500, body={\\\"error\\\":{\\\"message\\\":\\\"injected upstream error\\\"}}\",\"type\":\"api_error\",\"code\":\"upstream_retry_exhausted\",\"param\":null}}",
+        "{\"status\":504,\"message\":\"上游重试耗尽: 上游响应异常: status=500, body={\\\"error\\\":{\\\"message\\\":\\\"injected upstream error\\\"}}\",\"error\":{\"message\":\"上游重试耗尽: 上游响应异常: status=500, body={\\\"error\\\":{\\\"message\\\":\\\"injected upstream error\\\"}}\",\"type\":\"api_error\",\"code\":\"upstream_retry_exhausted\",\"param\":null}}"
+      ]
+    }
+  ]
+}
