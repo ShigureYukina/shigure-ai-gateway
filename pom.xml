@@ -252,6 +252,14 @@
                             <goal>check</goal>
                         </goals>
                         <configuration>
+                            <!--
+                              门禁不是许愿值，是当前实测值的下沿。
+                              实测（target/site/jacoco）：LINE 0.84 / INSTRUCTION 0.84。
+                              原先这里是 0.30，等于门禁形同虚设——真的掉到 0.30 以下也不会挂，
+                              覆盖率一路滑也没人知道。现在按实测值往下留一档设为 0.70：
+                              掉了 14 个点就会拦下来，让人回来补测试，而不是等到 0.30 才发现。
+                              要继续往上抬，先补测试，不要先抬数字。
+                            -->
                             <rules>
                                 <rule>
                                     <element>BUNDLE</element>
@@ -259,12 +267,12 @@
                                         <limit>
                                             <counter>LINE</counter>
                                             <value>COVEREDRATIO</value>
-                                            <minimum>0.30</minimum>
+                                            <minimum>0.70</minimum>
                                         </limit>
                                         <limit>
                                             <counter>INSTRUCTION</counter>
                                             <value>COVEREDRATIO</value>
-                                            <minimum>0.30</minimum>
+                                            <minimum>0.70</minimum>
                                         </limit>
                                     </limits>
                                 </rule>
