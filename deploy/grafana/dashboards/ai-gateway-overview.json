@@ -1,0 +1,1274 @@
+{
+  "uid": "ai-gateway-overview",
+  "title": "AI Gateway 总览",
+  "description": "多模型统一网关的租户流量、时延、Token/成本、配额与运行时指标。指标口径见 docs/observability/README.md。",
+  "tags": [
+    "ai-gateway"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": false,
+  "graphTooltip": 1,
+  "refresh": "10s",
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "timepicker": {
+    "refresh_intervals": [
+      "5s",
+      "10s",
+      "30s",
+      "1m",
+      "5m"
+    ]
+  },
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "tenant",
+        "label": "租户",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "ai-gateway-prometheus"
+        },
+        "definition": "label_values(ai_gateway_tenant_requests_total, tenant)",
+        "query": {
+          "query": "label_values(ai_gateway_tenant_requests_total, tenant)",
+          "refId": "tenant-variable"
+        },
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true,
+        "allValue": ".*",
+        "sort": 1,
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "options": []
+      },
+      {
+        "name": "provider",
+        "label": "供应商",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "ai-gateway-prometheus"
+        },
+        "definition": "label_values(ai_gateway_tenant_requests_total, provider)",
+        "query": {
+          "query": "label_values(ai_gateway_tenant_requests_total, provider)",
+          "refId": "provider-variable"
+        },
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true,
+        "allValue": ".*",
+        "sort": 1,
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "options": []
+      },
+      {
+        "name": "model",
+        "label": "模型",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "ai-gateway-prometheus"
+        },
+        "definition": "label_values(ai_gateway_tenant_requests_total, model)",
+        "query": {
+          "query": "label_values(ai_gateway_tenant_requests_total, model)",
+          "refId": "model-variable"
+        },
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true,
+        "allValue": ".*",
+        "sort": 1,
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "options": []
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "row",
+      "title": "总览",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "stat",
+      "title": "请求速率",
+      "description": "网关出口流量。面板内所有查询统一按 $tenant/$provider/$model 过滤。",
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 1
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "ai-gateway-prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "decimals": 2,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          },
+          "mappings": []
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "none",
+        "graphMode": "area"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(ai_gateway_tenant_requests_total{tenant=~\"$tenant\",provider=~\"$provider\",model=~\"$model\"}[$__rate_interval]))",
+          "legendFormat": "req/s",
+          "instant": false
+        }
+      ],
+      "noValue": "无数据"
+    },
+    {
+      "type": "stat",
+      "title": "错误率",
+      "description": "result=\"error\" 的请求占比。网关把上游异常、超时、限流都归到 error。",
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 6,
+        "y": 1
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "ai-gateway-prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "decimals": 2,
+          "min": 0,
+          "max": 100,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1
+              },
+              {
+                "color": "red",
+                "value": 5
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "value",
+        "graphMode": "area"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "100 * sum(rate(ai_gateway_tenant_requests_total{tenant=~\"$tenant\",provider=~\"$provider\",model=~\"$model\",result=\"error\"}[$__rate_interval])) / clamp_min(sum(rate(ai_gateway_tenant_requests_total{tenant=~\"$tenant\",provider=~\"$provider\",model=~\"$model\"}[$__rate_interval])), 1e-9) or vector(0)",
+          "legendFormat": "错误率",
+          "instant": false
+        }
+      ],
+      "noValue": "无数据"
+    },
+    {
+      "type": "stat",
+      "title": "端到端时延 P95",
+      "description": "网关自身记录的请求耗时。注意指标名带 _ms 但 Prometheus 导出的值是秒，这里乘 1000 换回毫秒。",
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 12,
+        "y": 1
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "ai-gateway-prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "decimals": 1,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 2000
+              },
+              {
+                "color": "red",
+                "value": 5000
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "value",
+        "graphMode": "area"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "1000 * histogram_quantile(0.95, sum(rate(ai_gateway_tenant_request_latency_ms_seconds_bucket{tenant=~\"$tenant\",provider=~\"$provider\",model=~\"$model\"}[$__rate_interval])) by (le))",
+          "legendFormat": "P95",
+          "instant": false
+        }
+      ],
+      "noValue": "无数据"
+    },
+    {
+      "type": "stat",
+      "title": "语义缓存命中率",
+      "description": "分母是 cacheHit + cacheMiss。埋点由 observability.cache-event-metrics-enabled 控制，语义缓存关闭时不产生事件，面板会显示「无数据」。",
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 18,
+        "y": 1
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "ai-gateway-prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "decimals": 2,
+          "min": 0,
+          "max": 100,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 30
+              },
+              {
+                "color": "green",
+                "value": 60
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "value",
+        "graphMode": "area"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "100 * sum(rate(ai_gateway_tenant_cache_events_total{tenant=~\"$tenant\",event=\"cacheHit\"}[$__rate_interval])) / clamp_min(sum(rate(ai_gateway_tenant_cache_events_total{tenant=~\"$tenant\",event=~\"cacheHit|cacheMiss\"}[$__rate_interval])), 1e-9)",
+          "legendFormat": "命中率",
+          "instant": false
+        }
+      ],
+      "noValue": "无数据"
+    },
+    {
+      "type": "row",
+      "title": "流量与时延",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 5
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "请求速率（按供应商）",
+      "description": "看流量在供应商之间怎么分布，验证动态路由是否按预期把流量挪走。",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 6
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "ai-gateway-prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "decimals": 2,
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 12,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "axisSoftMin": 0
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(ai_gateway_tenant_requests_total{tenant=~\"$tenant\",provider=~\"$provider\",model=~\"$model\"}[$__rate_interval])) by (provider)",
+          "legendFormat": "{{provider}}",
+          "instant": false
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "端到端时延分位",
+      "description": "P50 / P95 / P99。全部经 *1000 从秒换算为毫秒，与 docs/load/README.md 的性能基线同一口径。",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 6
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "ai-gateway-prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "decimals": 1,
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "axisSoftMin": 0
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "1000 * histogram_quantile(0.50, sum(rate(ai_gateway_tenant_request_latency_ms_seconds_bucket{tenant=~\"$tenant\",provider=~\"$provider\",model=~\"$model\"}[$__rate_interval])) by (le))",
+          "legendFormat": "P50",
+          "instant": false
+        },
+        {
+          "refId": "B",
+          "expr": "1000 * histogram_quantile(0.95, sum(rate(ai_gateway_tenant_request_latency_ms_seconds_bucket{tenant=~\"$tenant\",provider=~\"$provider\",model=~\"$model\"}[$__rate_interval])) by (le))",
+          "legendFormat": "P95",
+          "instant": false
+        },
+        {
+          "refId": "C",
+          "expr": "1000 * histogram_quantile(0.99, sum(rate(ai_gateway_tenant_request_latency_ms_seconds_bucket{tenant=~\"$tenant\",provider=~\"$provider\",model=~\"$model\"}[$__rate_interval])) by (le))",
+          "legendFormat": "P99",
+          "instant": false
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "HTTP 入口 QPS 与 P95（http.server.requests）",
+      "description": "WebFlux 自带的 HTTP 指标，与网关业务埋点互为交叉验证：这里偏高而业务 QPS 不动，通常是健康检查或控制台请求在涨。",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 14
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "ai-gateway-prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 2,
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "axisSoftMin": 0
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "P95"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "ms"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(http_server_requests_seconds_count{uri!~\"/actuator.*\"}[$__rate_interval])) by (uri)",
+          "legendFormat": "{{uri}}",
+          "instant": false
+        },
+        {
+          "refId": "B",
+          "expr": "1000 * histogram_quantile(0.95, sum(rate(http_server_requests_seconds_bucket{uri=~\"/v1/(chat/completions|messages|responses)\"}[$__rate_interval])) by (le))",
+          "legendFormat": "P95",
+          "instant": false
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Token、成本与配额",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 22
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Token 吞吐（按模型）",
+      "description": "tokens_in / tokens_out 是 DistributionSummary，只暴露 _count/_sum/_max，没有分桶，所以只能用 rate 求均值，不能取分位数。",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 23
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "ai-gateway-prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 1,
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "axisSoftMin": 0
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(ai_gateway_tenant_tokens_in_sum{tenant=~\"$tenant\",provider=~\"$provider\",model=~\"$model\"}[$__rate_interval])) by (model)",
+          "legendFormat": "{{model}} in",
+          "instant": false
+        },
+        {
+          "refId": "B",
+          "expr": "sum(rate(ai_gateway_tenant_tokens_out_sum{tenant=~\"$tenant\",provider=~\"$provider\",model=~\"$model\"}[$__rate_interval])) by (model)",
+          "legendFormat": "{{model}} out",
+          "instant": false
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "配额事件速率（按事件）",
+      "description": "event 取值来自 RedisTokenQuotaService：reserve / release / reject。埋点由 observability.quota-event-metrics-enabled 控制，未配配额时不产生事件。",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 23
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "ai-gateway-prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 2,
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "axisSoftMin": 0
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "reject"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(ai_gateway_tenant_quota_events_total{tenant=~\"$tenant\",provider=~\"$provider\",model=~\"$model\"}[$__rate_interval])) by (event)",
+          "legendFormat": "{{event}}",
+          "instant": false
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "配额 token 规模（按事件）",
+      "description": "同上；_sum 是 summary 型指标，只有 _count/_sum/_max，没有 _bucket。",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 31
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "ai-gateway-prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "axisSoftMin": 0
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(ai_gateway_tenant_quota_tokens_sum{tenant=~\"$tenant\",provider=~\"$provider\",model=~\"$model\"}[$__rate_interval])) by (event)",
+          "legendFormat": "{{event}}",
+          "instant": false
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "成本（USD）",
+      "description": "cost_usd 按调用结算，是累计值。曲线是每秒增量（乘 3600 换算成每小时花费，便于和账单对齐）。",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 31
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "ai-gateway-prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "decimals": 4,
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "axisSoftMin": 0
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(ai_gateway_tenant_cost_usd_sum{tenant=~\"$tenant\",provider=~\"$provider\",model=~\"$model\"}[$__rate_interval])) by (provider) * 3600",
+          "legendFormat": "{{provider}} USD/h",
+          "instant": false
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "运行时",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 39
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "JVM 堆内存",
+      "description": "网关是 WebFlux 转发型负载，堆增长通常来自 SSE 缓冲或连接池，而不是业务对象堆积。",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 40
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "ai-gateway-prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "decimals": 0,
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "axisSoftMin": 0
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "jvm_memory_used_bytes{area=\"heap\"}",
+          "legendFormat": "used",
+          "instant": false
+        },
+        {
+          "refId": "B",
+          "expr": "jvm_memory_committed_bytes{area=\"heap\"}",
+          "legendFormat": "committed",
+          "instant": false
+        },
+        {
+          "refId": "C",
+          "expr": "jvm_memory_max_bytes{area=\"heap\"} > 0",
+          "legendFormat": "max",
+          "instant": false
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "GC 暂停",
+      "description": "单次暂停均值。持续高于几十毫秒会直接体现在端到端时延的 P99 上。",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 40
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "ai-gateway-prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "decimals": 1,
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "axisSoftMin": 0
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "1000 * sum(rate(jvm_gc_pause_seconds_sum[$__rate_interval])) / clamp_min(sum(rate(jvm_gc_pause_seconds_count[$__rate_interval])), 1e-9)",
+          "legendFormat": "平均暂停",
+          "instant": false
+        },
+        {
+          "refId": "B",
+          "expr": "sum(rate(jvm_gc_pause_seconds_count[$__rate_interval]))",
+          "legendFormat": "GC 次/秒",
+          "instant": false
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "线程与 CPU",
+      "description": "Netty 事件循环线程数应稳定在核数附近；持续攀升通常有连接泄漏或阻塞调用被甩进了 event loop。",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 40
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "ai-gateway-prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 1,
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "axisSoftMin": 0
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "jvm_threads_live_threads",
+          "legendFormat": "live threads",
+          "instant": false
+        },
+        {
+          "refId": "B",
+          "expr": "100 * process_cpu_usage",
+          "legendFormat": "CPU %",
+          "instant": false
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "供应商维度明细",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 48
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "table",
+      "title": "按供应商汇总",
+      "description": "定时刻快照（instant query），用于横向比较各供应商的量、错误率与成本。",
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 49
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "ai-gateway-prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": false
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "错误率"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "decimals",
+                "value": 2
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "yellow",
+                      "value": 1
+                    },
+                    {
+                      "color": "red",
+                      "value": 5
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "P95 (ms)"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "ms"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "成本 USD/h"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "currencyUSD"
+              },
+              {
+                "id": "decimals",
+                "value": 4
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false,
+          "reducer": [
+            "sum"
+          ],
+          "countRows": false,
+          "fields": ""
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (provider) (rate(ai_gateway_tenant_requests_total{tenant=~\"$tenant\",provider=~\"$provider\",model=~\"$model\"}[$__rate_interval]))",
+          "legendFormat": "__auto",
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "refId": "B",
+          "expr": "100 * (sum by (provider) (rate(ai_gateway_tenant_requests_total{tenant=~\"$tenant\",provider=~\"$provider\",model=~\"$model\",result=\"error\"}[$__rate_interval])) or (0 * sum by (provider) (rate(ai_gateway_tenant_requests_total{tenant=~\"$tenant\",provider=~\"$provider\",model=~\"$model\"}[$__rate_interval])))) / clamp_min(sum by (provider) (rate(ai_gateway_tenant_requests_total{tenant=~\"$tenant\",provider=~\"$provider\",model=~\"$model\"}[$__rate_interval])), 1e-9)",
+          "legendFormat": "错误率",
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "refId": "C",
+          "expr": "1000 * histogram_quantile(0.95, sum by (le, provider) (rate(ai_gateway_tenant_request_latency_ms_seconds_bucket{tenant=~\"$tenant\",provider=~\"$provider\",model=~\"$model\"}[$__rate_interval])))",
+          "legendFormat": "P95 (ms)",
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "refId": "D",
+          "expr": "sum by (provider) (rate(ai_gateway_tenant_cost_usd_sum{tenant=~\"$tenant\",provider=~\"$provider\",model=~\"$model\"}[$__rate_interval])) * 3600",
+          "legendFormat": "成本 USD/h",
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "refId": "E",
+          "expr": "sum by (provider) (rate(ai_gateway_tenant_tokens_in_sum{tenant=~\"$tenant\",provider=~\"$provider\",model=~\"$model\"}[$__rate_interval])) + sum by (provider) (rate(ai_gateway_tenant_tokens_out_sum{tenant=~\"$tenant\",provider=~\"$provider\",model=~\"$model\"}[$__rate_interval]))",
+          "legendFormat": "Token/s",
+          "instant": true,
+          "format": "table"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "indexByName": {
+              "provider": 0,
+              "Value #A": 1,
+              "错误率": 2,
+              "P95 (ms)": 3,
+              "成本 USD/h": 4,
+              "Token/s": 5
+            },
+            "renameByName": {
+              "Value #A": "QPS"
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

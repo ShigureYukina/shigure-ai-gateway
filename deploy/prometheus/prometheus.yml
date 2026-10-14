@@ -1,0 +1,32 @@
+# Prometheus 抓取配置（本地 compose 栈用）。
+#
+# 只抓网关自己的 /actuator/prometheus：指标的租户/供应商/模型维度都由网关自己打，
+# 在网关侧抓一遍就够，不用再对上游 provider 抓一遍。
+#
+# 目标地址 app:8010 是 compose 网络内的服务名，不是 localhost——宿主机上跑
+# `curl localhost:9090/api/v1/targets` 看不到异常时要先想到这一点。
+global:
+  # 15s 是 Prometheus 官方默认；网关埋点维度不重，压低间隔收益有限
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    env: local-compose
+    monitor: ai-gateway
+
+scrape_configs:
+  - job_name: ai-gateway
+    metrics_path: /actuator/prometheus
+    # 网关面板的 $__rate_interval 下限是 5s，抓取间隔必须不大于它，
+    # 否则面板取到的窗口粒度比采集粒度还粗，短时尖峰会被抹平
+    scrape_interval: 5s
+    static_configs:
+      - targets:
+          - app:8010
+        labels:
+          service: ai-gateway
+
+  - job_name: prometheus
+    # 抓自己：看得到 Prometheus 侧的抓取失败数与自监控指标（本地栈调试方便）
+    static_configs:
+      - targets:
+          - localhost:9090

@@ -55,6 +55,14 @@ management:
   endpoint:
     health:
       show-details: always
+  metrics:
+    distribution:
+      # Spring Boot 自带的 http.server.requests 默认只导出 _count/_sum/_max，
+      # 算不出 P95；开了这个才会出 _bucket。看板「HTTP 入口」的 P95 面板依赖它。
+      # 注意这层配置对应用自己注册的 meter（如 ai_gateway_tenant_request_latency_ms）不生效，
+      # 那类指标要在代码里调 Timer#publishPercentileHistogram。
+      percentiles-histogram:
+        http.server.requests: true
   tracing:
     sampling:
       probability: ${OTEL_SAMPLING_RATE:1.0}

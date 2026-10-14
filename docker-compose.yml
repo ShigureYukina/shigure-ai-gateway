@@ -71,3 +71,46 @@ services:
       interval: 5s
       timeout: 5s
       retries: 30
+
+  # 可观测性栈：Prometheus 抓网关 /actuator/prometheus，Grafana 看板由文件自动 provision。
+  # 两个服务都只读挂载配置，数据目录留在容器内（不 bind mount，重来一次就是干净的）。
+  # 凭据走 .env（AI_GATEWAY_GRAFANA_PASSWORD），仅本地用，不要把这套栈直接开到公网。
+  prometheus:
+    image: ${IMAGE_PREFIX:-}prom/prometheus:v3.5.0
+    container_name: ai-gateway-prometheus
+    ports:
+      - "9090:9090"
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      # 本地调试只看最近一周，不设上限磁盘会随时间慢慢涨
+      - --storage.tsdb.retention.time=7d
+      # 允许 curl -X POST localhost:9090/-/reload 热加载抓取配置
+      - --web.enable-lifecycle
+    volumes:
+      - ./deploy/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    depends_on:
+      - app
+    restart: unless-stopped
+
+  grafana:
+    image: ${IMAGE_PREFIX:-}grafana/grafana:11.6.0
+    container_name: ai-gateway-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: ${AI_GATEWAY_GRAFANA_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${AI_GATEWAY_GRAFANA_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      # 首次登录直接落在网关看板，省得在列表里找
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/ai-gateway-overview.json
+      TZ: Asia/Shanghai
+    volumes:
+      # provisioning 目录整体只读挂进 /etc/grafana/provisioning（datasource + provider）
+      - ./deploy/grafana/provisioning:/etc/grafana/provisioning:ro
+      # 看板 JSON 单独挂到 provider 配置声明的路径，与 provisioning 分开挂
+      - ./deploy/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      - prometheus
+    restart: unless-stopped

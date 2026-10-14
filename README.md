@@ -102,6 +102,7 @@ flowchart LR
 ```bash
 docker compose up -d redis          # 只起依赖，应用跑在宿主机/IDE
 docker compose up -d                # 一键全栈：redis + mysql + nacos + 应用镜像（Dockerfile 多阶段构建）
+                                    # 外加 prometheus(:9090) + grafana(:3000, admin/admin 仅本地)
                                     # 前置：.env 里配置 AI_GATEWAY_DB_PASSWORD（模板见 .env.example）
 ```
 
@@ -314,6 +315,9 @@ docker run --rm -v //var/run/docker.sock:/var/run/docker.sock -w /app <maven-ima
 ## 可观测性与稳定性
 
 - **Prometheus 指标**：`/actuator/prometheus`
+  - 看板：`docker compose up -d` 会一并起 Prometheus（:9090）与 Grafana（:3000，`admin`/`admin`，仅本地）；
+    数据源与看板自动 provision，覆盖租户请求/时延/Token/成本/配额/缓存与 JVM。指标契约、单位坑（时延导出值是秒）
+    与 PromQL 校验方法见 `docs/observability/README.md`
 - **健康检查**：`/actuator/health`
 - **响应头**：所有响应带 `X-Request-Id`；配额超限额外带 `Retry-After`；
   开启限流后，模型调用响应带 `x-ratelimit-limit-tokens` / `x-ratelimit-remaining-tokens`（含 `-day` 变体）
@@ -383,7 +387,8 @@ powershell -ExecutionPolicy Bypass -File "scripts/simulate_e2e.ps1"
 ## Roadmap
 
 - [x] 增加 Testcontainers 集成测试（Redis）—— `AiGatewayMetricsRecorderRedisIntegrationTest`
-- [ ] 补充 Prometheus + Grafana 可视化面板
+- [x] 补充 Prometheus + Grafana 可视化面板 —— `docker compose up -d` 后 Prometheus :9090、Grafana :3000
+      （`admin`/`admin`，仅本地）；看板与数据源自动 provision，见 `docs/observability/README.md`
 - [ ] 增加真实上游 smoke test（受控 key / 限额）
 - [x] 输出性能基线（P95、错误率、吞吐）—— 见 `docs/load/README.md`
 - [x] 故障注入（上游 500 / 429 / 不回包）下的网关表现—— 见 `docs/load/fault-injection.md`

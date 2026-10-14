@@ -301,6 +301,13 @@ public class AiGatewayMetricsRecorder {
                         "model", model,
                         "result", result
                 )
+                // 显式开分位数直方图：只有开了它 Prometheus 侧才有 _bucket，
+                // histogram_quantile 才算得出 P95/P99。单靠
+                // management.metrics.distribution.percentiles-histogram 配不到这个 meter
+                // ——那套键名映射对应用自己注册的 meter 不生效（实测过）。
+                // 代价是每个 tag 组合一份 HdrHistogram，租户/模型维度扩散时内存跟着涨；
+                // 维度基数因此需要和 tenant-metrics-enabled 开关一起看。
+                .publishPercentileHistogram()
                 .register(meterRegistry)
                 .record(callRecord.getLatencyMillis() == null ? 0L : callRecord.getLatencyMillis(), TimeUnit.MILLISECONDS);
 
