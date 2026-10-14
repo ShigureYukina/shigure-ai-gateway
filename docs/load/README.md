@@ -1,7 +1,7 @@
 # AI 网关性能基线
 
 > 对应 README Roadmap「输出性能基线（P95、错误率、吞吐）」。
-> 全部组件跑在 Docker 内，本目录的 JSON 是原始测量结果，命令行可直接复现。
+> 全部组件跑在 Docker 内，`data/` 下的 JSON 是原始测量结果，命令行可直接复现。
 
 ## 一、测什么
 
@@ -34,6 +34,8 @@
 4. **按并发梯度测**（1 / 5 / 20 / 50），用来区分"每请求固定开销"和"排队等待"。
 
 ## 四、结果
+
+下表「原始数据」列的文件名均位于本目录的 `data/` 子目录下。
 
 ### 4.1 稳态基线（非流式，400 请求，并发 20，3 轮）
 
@@ -124,16 +126,16 @@ docker run -d --name aigw-gateway --network aigw-net -v "$CTX/target/shortlink-a
   --short-link.ai-gateway.tenant.enabled=true \
   --management.health.r2dbc.enabled=false
 
-# 预热（丢弃），再正式测 3 轮
-docker run --rm --network aigw-net -v "$CTX/scripts:/scripts" -v "$CTX/docs/load:/out" $IMG_PY \
+# 预热（丢弃），再正式测 3 轮（原始数据落在 docs/load/data/）
+docker run --rm --network aigw-net -v "$CTX/scripts:/scripts" -v "$CTX/docs/load/data:/out" $IMG_PY \
   python /scripts/load_test.py --base-url http://aigw-gateway:8010 --requests 60 --concurrency 4 --output /out/warmup.json
-docker run --rm --network aigw-net -v "$CTX/scripts:/scripts" -v "$CTX/docs/load:/out" $IMG_PY \
+docker run --rm --network aigw-net -v "$CTX/scripts:/scripts" -v "$CTX/docs/load/data:/out" $IMG_PY \
   python /scripts/load_test.py --base-url http://aigw-gateway:8010 --requests 400 --concurrency 20 --output /out/baseline-r1.json
 ```
 
 说明：`--management.health.r2dbc.enabled=false` 只是本机未启 MySQL 时避免 `/actuator/health` 返回 503，与性能无关；租户鉴权必须开启，否则鉴权与模型策略两条失败路径不会被走到。
 
-## 七、本目录数据文件
+## 七、数据文件（`data/` 子目录）
 
 | 文件 | 用途 |
 | --- | --- |
@@ -142,6 +144,10 @@ docker run --rm --network aigw-net -v "$CTX/scripts:/scripts" -v "$CTX/docs/load
 | `baseline-r1/r2/r3.json` | 稳态基线 3 轮 |
 | `upstream-only-r1/r2/r3.json` | 直连上游对照 3 轮 |
 | `gateway-c1/c5/c50.json`、`upstream-only-c1/c5.json` | 并发梯度 |
+| `fault-*.json` | 故障注入四组，详见 [`fault-injection.md`](./fault-injection.md) |
+
+原始数据统一放在 `data/` 子目录，md 报告留在本层——复现命令里的挂载点相应改为
+`-v "$CTX/docs/load/data:/out"`。
 
 ## 八、边界与没做的事
 

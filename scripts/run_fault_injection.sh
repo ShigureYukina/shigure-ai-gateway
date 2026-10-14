@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 故障注入测量：三组场景（上游 500 / 上游 429 / 上游不回包）各跑一轮，
-# 结果写到 docs/load/fault-*.json，供 docs/load/fault-injection.md 引用。
+# 结果写到 docs/load/data/fault-*.json，供 docs/load/fault-injection.md 引用。
 #
 # 为什么要单独一个脚本：docs/load/README.md 那套基线是「全链路健康」下测的，
 # 网关自己的降级路径（错误归类、熔断计数、超时、fail-open）在健康上游下根本不会被走到。
@@ -31,7 +31,7 @@ else
 fi
 IMG_PY="${IMG_PY:-docker.m.daocloud.io/library/python:3.12-slim}"
 IMG_JRE="${IMG_JRE:-docker.m.daocloud.io/library/eclipse-temurin:17-jre}"
-OUT="$CTX/docs/load"
+OUT="$CTX/docs/load/data"
 
 REQUESTS="${REQUESTS:-200}"
 CONCURRENCY="${CONCURRENCY:-20}"

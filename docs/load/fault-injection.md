@@ -79,8 +79,9 @@ CPU 是唯一的差异，而且是**环境限制**而非配置失误：本机试
 | ratelimit429（25% 429） | 8% | 557.61 | 30.86 | 66.05 | 101.38 | 108.10 | 200 × 16，500 × 181，504 × 3 |
 | hang-timeout（上游不回包，超时 2s） | 0% | 49.38 | 25.05 | 2045.12 | 2067.78 | 2074.17 | 500 × 200 |
 
-原始数据：`fault-baseline.json` / `fault-error500.json` / `fault-ratelimit429.json` /
-`fault-hang-timeout.json`（每组另有一份 `-warmup.json`，仅用于预热，结果丢弃）。
+原始数据（`data/` 子目录下）：`fault-baseline.json` / `fault-error500.json` /
+`fault-ratelimit429.json` / `fault-hang-timeout.json`
+（每组另有一份 `-warmup.json`，仅用于预热，结果丢弃）。
 本表只是摘要，不引入 JSON 之外的二次计算。
 
 ### 4.1 一个必须先说的读数陷阱
