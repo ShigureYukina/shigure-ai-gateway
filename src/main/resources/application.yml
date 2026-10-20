@@ -88,6 +88,10 @@ resilience4j:
         failure-rate-threshold: 50
         wait-duration-in-open-state: 10s
         permitted-number-of-calls-in-half-open-state: 5
+        # 429（限流）不计入失败率：它是上游按配额临时踩刹车，不是通道坏了。
+        # 计入会让一次瞬时限流在几秒内摘掉整条渠道；口径与后台探测一致（探测同样不计 429）。
+        ignore-exceptions:
+          - com.nageoffer.shortlink.aigateway.exception.AiGatewayUpstreamRateLimitedException
       provider-claude:
         sliding-window-type: COUNT_BASED
         sliding-window-size: 20
@@ -95,6 +99,8 @@ resilience4j:
         failure-rate-threshold: 50
         wait-duration-in-open-state: 10s
         permitted-number-of-calls-in-half-open-state: 5
+        ignore-exceptions:
+          - com.nageoffer.shortlink.aigateway.exception.AiGatewayUpstreamRateLimitedException
 
 short-link:
   ai-gateway:

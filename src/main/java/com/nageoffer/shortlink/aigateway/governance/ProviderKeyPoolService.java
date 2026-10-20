@@ -4,6 +4,7 @@ import com.nageoffer.shortlink.aigateway.config.AiGatewayProperties;
 import com.nageoffer.shortlink.aigateway.exception.AiGatewayClientException;
 import com.nageoffer.shortlink.aigateway.exception.AiGatewayErrorCode;
 import com.nageoffer.shortlink.aigateway.exception.AiGatewayUpstreamException;
+import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
@@ -145,8 +146,15 @@ public class ProviderKeyPoolService {
 
     /**
      * 是否属于"这把 Key 的问题"。
+     * <p>
+     * 通道熔断器 OPEN 后抛出的 {@link CallNotPermittedException} 是网关<b>自己的</b>快速失败，
+     * 请求根本没打到上游——它既不能归咎于 Key，也不该把当前选中的 Key 关进冷却。
+     * 否则某把 Key 触发的通道熔断会连坐池里其他健康的 Key，几轮之后整个渠道一起被判死。
      */
     private boolean isKeyRelated(Throwable error) {
+        if (error instanceof CallNotPermittedException) {
+            return false;
+        }
         if (error instanceof AiGatewayUpstreamException upstreamException) {
             Integer status = upstreamException.getStatus();
             if (status == null) {

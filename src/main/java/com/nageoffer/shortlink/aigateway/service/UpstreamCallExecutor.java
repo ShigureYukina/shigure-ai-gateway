@@ -8,6 +8,7 @@ import com.nageoffer.shortlink.aigateway.dto.req.AiChatCompletionReqDTO;
 import com.nageoffer.shortlink.aigateway.exception.AiGatewayClientException;
 import com.nageoffer.shortlink.aigateway.exception.AiGatewayErrorCode;
 import com.nageoffer.shortlink.aigateway.exception.AiGatewayUpstreamException;
+import com.nageoffer.shortlink.aigateway.exception.AiGatewayUpstreamRateLimitedException;
 import com.nageoffer.shortlink.aigateway.governance.AiSafetyGuard;
 import com.nageoffer.shortlink.aigateway.governance.ProviderRateLimitService;
 import com.nageoffer.shortlink.aigateway.governance.StreamUsageCollector;
@@ -327,7 +328,12 @@ public class UpstreamCallExecutor {
      */
     private RuntimeException buildUpstreamException(int statusCode, String body, AiRoutePolicy routePolicy) {
         boolean retriable = routePolicy.getRetryStatusCodes().contains(statusCode);
-        return new AiGatewayUpstreamException(statusCode, "上游响应异常: status=" + statusCode + ", body=" + truncate(body), retriable);
+        String message = "上游响应异常: status=" + statusCode + ", body=" + truncate(body);
+        if (statusCode == 429) {
+            // 429 单独成类：熔断器按类名把它排除在失败率之外，避免一次瞬时限流摘掉整条渠道
+            return new AiGatewayUpstreamRateLimitedException(statusCode, message, retriable);
+        }
+        return new AiGatewayUpstreamException(statusCode, message, retriable);
     }
 
     private String truncate(String body) {

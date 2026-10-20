@@ -4,6 +4,8 @@ import com.nageoffer.shortlink.aigateway.controller.AiModelsController;
 import com.nageoffer.shortlink.aigateway.crypto.MasterKey;
 import com.nageoffer.shortlink.aigateway.crypto.SecretCipher;
 import com.nageoffer.shortlink.aigateway.crypto.SecretHasher;
+import com.nageoffer.shortlink.aigateway.exception.AiGatewayUpstreamException;
+import com.nageoffer.shortlink.aigateway.exception.AiGatewayUpstreamRateLimitedException;
 import com.nageoffer.shortlink.aigateway.governance.RateLimitHeaderService;
 import com.nageoffer.shortlink.aigateway.governance.SemanticCacheService;
 import com.nageoffer.shortlink.aigateway.governance.UpstreamCredentialService;
@@ -21,7 +23,10 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.ApplicationContext;
 import org.springframework.web.reactive.function.client.WebClient;
 
+import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
+
 import java.time.Duration;
+import java.util.function.Predicate;
 
 /**
  * 上下文装配冒烟测试。
@@ -137,5 +142,23 @@ class AiGatewayApplicationContextTest {
         // @Primary 让没写 @Qualifier 的注入点（UpstreamCallExecutor）继续拿到数据面客户端
         Assertions.assertSame(applicationContext.getBean(WebClient.class),
                 applicationContext.getBean("aiGatewayWebClient"));
+    }
+
+    /**
+     * provider 熔断器必须把 429（限流）排除在失败率之外。
+     * <p>
+     * 这是 yml 里 {@code ignore-exceptions} 那个类名绑定对没对的回归守卫：
+     * 类名写错时启动会失败，绑定错类时这条断言会红。
+     */
+    @Test
+    void shouldExcludeUpstreamRateLimitFromProviderCircuitBreakerFailureRate() {
+        CircuitBreakerRegistry registry = applicationContext.getBean(CircuitBreakerRegistry.class);
+        Predicate<Throwable> ignore = registry.circuitBreaker("provider-openai")
+                .getCircuitBreakerConfig().getIgnoreExceptionPredicate();
+
+        Assertions.assertTrue(ignore.test(new AiGatewayUpstreamRateLimitedException(429, "上游响应异常: status=429", true)),
+                "429 必须被熔断器忽略，否则一次瞬时限流会摘掉整条渠道");
+        Assertions.assertFalse(ignore.test(new AiGatewayUpstreamException(500, "上游响应异常: status=500", false)),
+                "5xx 仍应计入失败率");
     }
 }

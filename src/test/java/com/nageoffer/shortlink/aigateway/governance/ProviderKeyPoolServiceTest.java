@@ -4,6 +4,8 @@ import com.nageoffer.shortlink.aigateway.config.AiGatewayProperties;
 import com.nageoffer.shortlink.aigateway.exception.AiGatewayClientException;
 import com.nageoffer.shortlink.aigateway.exception.AiGatewayErrorCode;
 import com.nageoffer.shortlink.aigateway.exception.AiGatewayUpstreamException;
+import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
+import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 
@@ -110,6 +112,26 @@ class ProviderKeyPoolServiceTest {
         service.reportFailure("t1", "openai", "k1", rateLimited);
 
         Assertions.assertTrue(service.describe().containsKey("t1|openai|k1"));
+    }
+
+    @Test
+    void shouldNotCoolKeyForCircuitBreakerRejection() {
+        // 通道熔断器 OPEN 后抛的是网关自己的快速失败，请求根本没打到上游，
+        // 不该算到"当前选中的这把 Key"头上——否则会连坐池里其他健康 Key
+        List<AiGatewayProperties.ProviderApiKey> pool = List.of(key("k1", "sk-1", 1), key("k2", "sk-2", 1));
+        CircuitBreaker circuitBreaker = CircuitBreaker.ofDefaults("provider-openai");
+        CallNotPermittedException rejection = CallNotPermittedException.createCallNotPermittedException(circuitBreaker);
+
+        for (int i = 0; i < 5; i++) {
+            service.reportFailure("t1", "openai", "k1", rejection);
+        }
+
+        List<String> selected = new ArrayList<>();
+        for (int i = 0; i < 50; i++) {
+            selected.add(service.keyIdOf(service.select("t1", "openai", pool)));
+        }
+        Assertions.assertTrue(selected.contains("k1"), "熔断拒绝不该冷却 Key");
+        Assertions.assertFalse(service.describe().containsKey("t1|openai|k1"), "熔断拒绝不该产生失败计数");
     }
 
     private AiGatewayProperties.ProviderApiKey key(String keyId, String apiKey, int weight) {
