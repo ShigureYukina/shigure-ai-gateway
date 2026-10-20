@@ -1,0 +1,36 @@
+{
+  "base_url": "http://aigw-gateway:8010",
+  "scenarios": [
+    {
+      "scenario": "non_stream_success",
+      "requests": 200,
+      "concurrency": 2,
+      "success": 198,
+      "failure": 2,
+      "success_rate": 0.99,
+      "throughput_rps": 49.52,
+      "wall_seconds": 4.039,
+      "latency_ms": {
+        "avg": 40.3,
+        "p50": 39.75,
+        "p95": 42.14,
+        "p99": 55.12,
+        "max": 69.79
+      },
+      "first_byte_ms": {
+        "avg": null,
+        "p50": null,
+        "p95": null,
+        "max": null
+      },
+      "status_counts": {
+        "504": 2,
+        "200": 198
+      },
+      "sample_errors": [
+        "{\"status\":504,\"message\":\"上游重试耗尽: 上游响应异常: status=429, body={\\\"error\\\":{\\\"message\\\":\\\"injected failure for key\\\",\\\"type\\\":\\\"rate_limit_error\\\"}}\",\"error\":{\"message\":\"上游重试耗尽: 上游响应异常: status=429, body={\\\"error\\\":{\\\"message\\\":\\\"injected failure for key\\\",\\\"type\\\":\\\"rate_limit_error\\\"}}\",\"type\":\"api_error\",\"code\":\"upstream_retry_exhausted\",\"param\":null}}",
+        "{\"status\":504,\"message\":\"上游重试耗尽: 上游响应异常: status=429, body={\\\"error\\\":{\\\"message\\\":\\\"injected failure for key\\\",\\\"type\\\":\\\"rate_limit_error\\\"}}\",\"error\":{\"message\":\"上游重试耗尽: 上游响应异常: status=429, body={\\\"error\\\":{\\\"message\\\":\\\"injected failure for key\\\",\\\"type\\\":\\\"rate_limit_error\\\"}}\",\"type\":\"api_error\",\"code\":\"upstream_retry_exhausted\",\"param\":null}}"
+      ]
+    }
+  ]
+}

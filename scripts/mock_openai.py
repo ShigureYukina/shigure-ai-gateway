@@ -1,6 +1,7 @@
 import argparse
 import json
 import random
+import threading
 import time
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -13,7 +14,22 @@ CONFIG = {
     "error_rate": 0.0,
     "rate_limit_rate": 0.0,
     "hang_ms": 0.0,
+    # 按 Key 注入：Authorization 里含该子串的请求单独返回失败，用来只打坏池子里的一把 Key。
+    # 与上面的全局比例注入正交：全局注入回答"上游整体不稳会怎样"，
+    # 按 Key 注入回答"只坏一把 Key 时，网关是换一把继续还是把整条通道判死"。
+    "fail_auth_key": "",
+    "fail_auth_key_status": 429,
 }
+
+# 每个上游凭证（Authorization 原值）收到的请求数，仅供 /_stats 观察，
+# 用来证明"坏 Key 冷却后，好 Key 真的在承接流量"——只看成功率无法区分这一点。
+COUNTS = {}
+COUNTS_LOCK = threading.Lock()
+
+
+def _record_auth(auth):
+    with COUNTS_LOCK:
+        COUNTS[auth] = COUNTS.get(auth, 0) + 1
 
 
 def _sleep_ms(base_ms, jitter_ms=0):
@@ -41,6 +57,19 @@ class MockHandler(BaseHTTPRequestHandler):
     # request/response pair, so batching gains nothing.
     disable_nagle_algorithm = True
 
+    def do_GET(self):
+        if self.path == "/_stats":
+            with COUNTS_LOCK:
+                snapshot = dict(COUNTS)
+            body = json.dumps({"requests_by_auth": snapshot}).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        self._send_json(404, b'{"error":{"message":"not found"}}')
+
     def do_POST(self):
         if self.path != "/v1/chat/completions":
             self._send_json(404, b'{"error":{"message":"not found"}}')
@@ -51,6 +80,24 @@ class MockHandler(BaseHTTPRequestHandler):
         compact = body.replace(" ", "").lower()
         is_stream = '"stream":true' in compact
         model = self._extract_model(body)
+
+        # 按 Key 观察与注入。记录每把 Key 的命中次数（/_stats 用），并让匹配
+        # fail_auth_key 的那把 Key 单独失败——这是"只坏一把 Key"的场景，与下面的
+        # 全局比例注入正交：一个问"上游整体不稳会怎样"，一个问"只坏一把 Key 时
+        # 网关是换一把继续、还是把整条通道判死"。
+        auth = self.headers.get("Authorization", "")
+        _record_auth(auth)
+        if CONFIG["fail_auth_key"] and CONFIG["fail_auth_key"] in auth:
+            status = CONFIG["fail_auth_key_status"]
+            payload = b'{"error":{"message":"injected failure for key","type":"rate_limit_error"}}'
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            if status == 429:
+                self.send_header("Retry-After", "1")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+            return
 
         # 故障注入。三个通道各自独立取样，先 429 再 500：
         # 429 在网关侧被归类为 PROVIDER_RATE_LIMITED（属于通道故障，会触发冷却与回退），
@@ -175,6 +222,11 @@ def parse_args():
                              "(exercise the gateway read-timeout path; shorten the gateway's "
                              "timeout-retry.read-timeout so this does not take 60s)")
     parser.add_argument("--seed", type=int, default=None, help="random seed for reproducible jitter")
+    parser.add_argument("--fail-auth-key", default="",
+                        help="answer only requests whose Authorization contains this substring with "
+                             "--fail-auth-key-status; used to break a single key inside the pool")
+    parser.add_argument("--fail-auth-key-status", type=int, default=429,
+                        help="status code returned for --fail-auth-key matches (default 429)")
     return parser.parse_args()
 
 
@@ -190,6 +242,8 @@ def main():
         "error_rate": args.error_rate,
         "rate_limit_rate": args.rate_limit_rate,
         "hang_ms": args.hang_ms,
+        "fail_auth_key": args.fail_auth_key,
+        "fail_auth_key_status": args.fail_auth_key_status,
     })
 
     server = MockServer((args.host, args.port), MockHandler)
@@ -197,7 +251,8 @@ def main():
         f"mock-openai listening on {args.host}:{args.port} "
         f"(ttft={args.ttft_ms}ms latency={args.latency_ms}ms jitter={args.jitter_ms}ms "
         f"chunks={args.chunk_count} error_rate={args.error_rate} "
-        f"rate_limit_rate={args.rate_limit_rate} hang_ms={args.hang_ms})",
+        f"rate_limit_rate={args.rate_limit_rate} hang_ms={args.hang_ms} "
+        f"fail_auth_key={args.fail_auth_key!r} fail_auth_key_status={args.fail_auth_key_status})",
         flush=True,
     )
     try:

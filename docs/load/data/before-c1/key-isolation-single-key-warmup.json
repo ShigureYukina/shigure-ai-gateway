@@ -1,0 +1,32 @@
+{
+  "base_url": "http://aigw-gateway:8010",
+  "scenarios": [
+    {
+      "scenario": "non_stream_success",
+      "requests": 200,
+      "concurrency": 8,
+      "success": 200,
+      "failure": 0,
+      "success_rate": 1.0,
+      "throughput_rps": 104.24,
+      "wall_seconds": 1.919,
+      "latency_ms": {
+        "avg": 75.34,
+        "p50": 45.04,
+        "p95": 84.37,
+        "p99": 722.7,
+        "max": 735.7
+      },
+      "first_byte_ms": {
+        "avg": null,
+        "p50": null,
+        "p95": null,
+        "max": null
+      },
+      "status_counts": {
+        "200": 200
+      },
+      "sample_errors": []
+    }
+  ]
+}
