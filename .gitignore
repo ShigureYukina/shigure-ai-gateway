@@ -68,3 +68,10 @@ venv/
 # Personal files — never publish (含手机号/邮箱)
 resume.html
 新建文本文档.txt
+
+# 文档与实验材料：仅在本地保留，不入库（仓库只存可运行代码）
+/docs/
+/openspec/
+/.opencode/
+/scripts/
+/AGENTS.md
