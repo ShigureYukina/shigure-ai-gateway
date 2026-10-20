@@ -11,8 +11,8 @@
 </div>
 
 > **关于历史提交信息中的数字**：早期 commit message 里的吞吐数字（如 1.3k → 11.5k RPS）
-> 来自与 docs/perf/ 不同的测量条件，本仓库与简历均不引用该口径；
-> 权威压测数据与口径见 docs/perf/README.md 与 docs/load/。
+> 来自与权威基线不同的测量条件，本仓库与简历均不引用该口径；
+> 权威压测数据与口径为本机存档，未随仓库分发。
 
 一个面向 LLM 接入场景的统一 AI 网关，基于 **Spring Boot 3 + WebFlux** 构建，对外提供 **OpenAI 兼容接口**，对内支持多 Provider 路由、流式透传、配额治理与韧性保护。
 
@@ -66,7 +66,7 @@
 - **Language**: Java 17
 - **Framework**: Spring Boot 3.3.2, Spring WebFlux + WebClient（网关为自研转发层，未使用 Spring Cloud Gateway 路由）
 - **Data & Cache**: Redis, R2DBC(MySQL，可选)
-- **注册与配置中心**: Nacos（服务发现 + Config 动态配置，导入/刷新细节见 `docs/config/README.md`）
+- **注册与配置中心**: Nacos（服务发现 + Config 动态配置，支持启动导入与运行期整体重绑）
 - **Observability**: Micrometer, Prometheus, OpenTelemetry Tracing
 - **Test**: JUnit 5, Reactor Test, Testcontainers（Redis 集成测试）, Nacos Config 导入集成测试（CI）
 - **Build**: Maven, Docker（多阶段镜像）
@@ -316,8 +316,8 @@ docker run --rm -v //var/run/docker.sock:/var/run/docker.sock -w /app <maven-ima
 
 - **Prometheus 指标**：`/actuator/prometheus`
   - 看板：`docker compose up -d` 会一并起 Prometheus（:9090）与 Grafana（:3000，`admin`/`admin`，仅本地）；
-    数据源与看板自动 provision，覆盖租户请求/时延/Token/成本/配额/缓存与 JVM。指标契约、单位坑（时延导出值是秒）
-    与 PromQL 校验方法见 `docs/observability/README.md`
+    数据源与看板自动 provision，覆盖租户请求/时延/Token/成本/配额/缓存与 JVM。指标契约与单位约定
+    （时延导出值为秒）以 `/actuator/prometheus` 实际输出为准
 - **健康检查**：`/actuator/health`
 - **响应头**：所有响应带 `X-Request-Id`；配额超限额外带 `Retry-After`；
   开启限流后，模型调用响应带 `x-ratelimit-limit-tokens` / `x-ratelimit-remaining-tokens`（含 `-day` 变体）
@@ -356,31 +356,11 @@ docker run --rm -v //var/run/docker.sock:/var/run/docker.sock -w /app <maven-ima
 
 ---
 
-## 本地“近真实”E2E 模拟
-
-无需真实外部 API，可使用内置脚本验证主流程：
-
-```bash
-mvn -DskipTests package
-powershell -ExecutionPolicy Bypass -File "scripts/simulate_e2e.ps1"
-```
-
-该脚本会自动：
-
-- 启动本地 mock provider（`127.0.0.1:18080`）
-- 启动网关（`127.0.0.1:18010`）
-- 验证流式与非流式链路
-
----
-
 ## 工程化能力
 
 - CI：`.github/workflows/ci.yml`（`clean verify` + 覆盖率门禁 + 打包上传）
 - 安全扫描：OWASP Dependency-Check（按需运行 `mvn dependency-check:check`，未纳入 CI）
-- 协作规范：`AGENTS.md`
-- API 清单：`docs/api-inventory.md`
-- 产品文档：`docs/product/`（PRD 与竞品分析）
-- 性能基线：`docs/load/README.md`（稳态 P50 37.7ms / P95 44.6ms / 503 RPS，网关开销 ≈1.7ms）
+- 性能基线：稳态 P50 37.7ms / P95 44.6ms / 503 RPS，网关开销 ≈1.7ms（本机实测，原始数据本地存档）
 
 ---
 
@@ -388,16 +368,16 @@ powershell -ExecutionPolicy Bypass -File "scripts/simulate_e2e.ps1"
 
 - [x] 增加 Testcontainers 集成测试（Redis）—— `AiGatewayMetricsRecorderRedisIntegrationTest`
 - [x] 补充 Prometheus + Grafana 可视化面板 —— `docker compose up -d` 后 Prometheus :9090、Grafana :3000
-      （`admin`/`admin`，仅本地）；看板与数据源自动 provision，见 `docs/observability/README.md`
+      （`admin`/`admin`，仅本地）；看板与数据源自动 provision
 - [ ] 增加真实上游 smoke test（受控 key / 限额）
-- [x] 输出性能基线（P95、错误率、吞吐）—— 见 `docs/load/README.md`
-- [x] 故障注入（上游 500 / 429 / 不回包）下的网关表现—— 见 `docs/load/fault-injection.md`
+- [x] 输出性能基线（P95、错误率、吞吐）
+- [x] 故障注入（上游 500 / 429 / 不回包）下的网关表现
       （该次采集 CPU 限到 4 核，绝对吞吐不可与性能基线并列；跨供应商回退仍未覆盖）
 - [x] 通道组 + 五种负载均衡策略（优先级降级 / 轮询 / 随机 / 加权 / 动态健康分）
 - [x] 模型清单与价格自动同步（models.dev + 渠道 `/v1/models`）
 - [x] 实时请求链路可视化（SSE + 控制台时间线）
 - [x] 原生协议入口（Anthropic Messages / OpenAI Responses）
 - [x] 渠道多 Key 池 + 渠道级 RPM
-- [x] 竞品对比文档（vs New API / Octopus / LiteLLM）—— 见 `docs/product/竞品分析-AI网关.md`（Octopus 经检索核实指向 bestruirui/octopus）
+- [x] 竞品对比结论（vs New API / Octopus / LiteLLM；Octopus 经检索核实指向 bestruirui/octopus）
 - [x] 通道主动探测（定时健康测试 + 自动禁用/恢复）
-- [x] Nacos Config 配置中心（启动导入 + 动态刷新 + DB/Nacos/yml 优先级对账）—— 见 `docs/config/README.md`
+- [x] Nacos Config 配置中心（启动导入 + 动态刷新 + DB/Nacos/yml 优先级对账）
